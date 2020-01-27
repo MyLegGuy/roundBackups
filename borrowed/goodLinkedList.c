@@ -5,8 +5,10 @@
 #include "goodLinkedList.h"
 struct nList* lowNewnList(){
 	struct nList* _ret = malloc(sizeof(struct nList));
-	_ret->nextEntry = NULL;
-	_ret->data = NULL;
+	if (_ret){
+		_ret->nextEntry = NULL;
+		_ret->data = NULL;
+	}
 	return _ret;
 }
 struct nList* getnList(struct nList* _passed, int _index){
@@ -37,11 +39,13 @@ void appendnList(struct nList** _source, struct nList* _addThis){
 	}
 	_temp->nextEntry=_addThis;
 }
-struct nList* addnList(struct nList** _passed){
-	struct nList* _addThis = lowNewnList();
-	appendnList(_passed,_addThis);
-	return _addThis;
-}
+/* struct nList* addnList(struct nList** _passed){ */
+/* 	struct nList* _addThis = lowNewnList(); */
+/* 	if (_addThis){ */
+/* 		appendnList(_passed,_addThis); */
+/* 	} */
+/* 	return _addThis; */
+/* } */
 struct nList* removenList(struct nList** _removeFrom, int _removeIndex){
 	if (_removeIndex==0){
 		struct nList* _tempHold = *_removeFrom;
@@ -85,8 +89,13 @@ struct nList** initSpeedyAddnList(struct nList** _passedList){
 	return NULL;
 }
 struct nList** speedyAddnList(struct nList** _nextHolder, void* _desiredData){
+	struct nList* _newEntry=malloc(sizeof(struct nList));
+	if (!_newEntry){
+		fprintf(stderr,"speedyaddnlist alloc error\n");
+		return NULL;
+	}
 	// Set the value of our next entry to our new entry
-	*_nextHolder = malloc(sizeof(struct nList));
+	*_nextHolder = _newEntry;
 	// Set the data of our new entry
 	(*_nextHolder)->data = _desiredData;
 	// Now, we're going to point to our new entry's next entry
@@ -96,23 +105,23 @@ void endSpeedyAddnList(struct nList** _nextHolder){
 	// Mark the end of the list by adding making it NULL
 	*_nextHolder=NULL;
 }
-// the index you pass will be the index of the inserted element
-struct nList* insertnList(struct nList** _passedList, int _index){
-	struct nList* _newEntry = malloc(sizeof(struct nList));
-	if (*_passedList==NULL || _index==0){
-		_newEntry->nextEntry=*_passedList;
-		*_passedList=_newEntry;
-		return _newEntry;
-	}else{
-		int i=0;
-		ITERATENLIST((*_passedList),{
-				if (i==_index-1){
-					_newEntry->nextEntry=_curnList->nextEntry;
-					_curnList->nextEntry=_newEntry;
-					return _newEntry;
-				}
-				++i;
-			});
-	}
-	return NULL;
-}
+/* // the index you pass will be the index of the inserted element */
+/* struct nList* insertnList(struct nList** _passedList, int _index){ */
+/* 	struct nList* _newEntry = malloc(sizeof(struct nList)); */
+/* 	if (*_passedList==NULL || _index==0){ */
+/* 		_newEntry->nextEntry=*_passedList; */
+/* 		*_passedList=_newEntry; */
+/* 		return _newEntry; */
+/* 	}else{ */
+/* 		int i=0; */
+/* 		ITERATENLIST((*_passedList),{ */
+/* 				if (i==_index-1){ */
+/* 					_newEntry->nextEntry=_curnList->nextEntry; */
+/* 					_curnList->nextEntry=_newEntry; */
+/* 					return _newEntry; */
+/* 				} */
+/* 				++i; */
+/* 			}); */
+/* 	} */
+/* 	return NULL; */
+/* } */

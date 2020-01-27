@@ -7,3 +7,15 @@ Format of the disc image:
 <uint32_t: crc32 of encrypted worried archive>
 uint64_t numPacketBackupData
 (numPacketBackupData) bytes of packet headers
+
+
+packet header backup:
+<packet header>
+<a byte>
+   // if this byte is 0x01 then the packet's contents follow
+   // if this byte is 0x00 then then the packet's contents do not follow
+   // if this byte is >0x01 then read the next byte
+		// (note that this will only happen for partial length headers)
+		// the first byte and the second byte come together to form a BIG endian uint16_t with bit 7 (leftmost) of the first byte ignored.
+		// this number represents the number of packets in a row with this partial length.
+		// to get the big endian bits, do ((a & 0x7f) << 8) | b

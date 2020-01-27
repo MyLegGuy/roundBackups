@@ -16,7 +16,6 @@ struct filterEntry{
 	unsigned char flag;
 };
 
-void fixFilter(char* _filter);
 struct filterEntry* loadFilter(const char* _filepath, size_t* _retLen);
 char filterMatches(const unsigned char* _test, int _testLen, const unsigned char* _filter);
 char isFiltered(const char* _passedPath, unsigned char _passedType, int _numFilters, struct filterEntry* _filters);

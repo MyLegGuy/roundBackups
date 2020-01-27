@@ -25,9 +25,10 @@ struct headerBak{
 	<packet header>
 	<0x00 or 0x01. if 0x01 then packet data is after this. otherwise another packet header is coming.>
 	*/
-	char* data;
+	unsigned char* data;
 	uint64_t curUsed;
 	uint64_t size;
+	signed char isCompress; // 0 if impossible. 1 is true. -1 if can compress.
 
 	unsigned char numBuff[4]; // for 5 byte numbers
 	signed char headerProgress; // -1 if done. need to use like that because curLeft can be 0 after valid packet
@@ -44,7 +45,7 @@ struct info{
 	FILE* testout;
 };
 struct fileCallInfo{
-	char** filenames; // absolute filenames
+	struct newFile** fileList;
 	char* rootDir; // ends in a slash. chop everything off the filename past this. 
 };
 
@@ -152,21 +153,78 @@ top:
 			}
 			h->headerProgress=-1;
 		}
-		// let's go again!
 		if (h->headerProgress==-1){ // just finished, reset vars for next time
-			//fprintf(stderr,"length is:  %ld\n",h->curLeft);
+			if (h->packetType==-1){ // if it's a partial length packet then try to compress
+			switchcompresstype:
+				switch(h->isCompress){
+					case -1:
+						if (_curByte==h->data[h->curUsed-2]){ // init the compress if it's the same byte
+							// add an additional byte for the second byte of the number
+							if (addToSave(h,buff,1)==-2){
+								return -2;
+							}
+							h->data[h->curUsed-2]=0x80; // set leftmost bit of first byte
+							h->data[h->curUsed-1]=2; // this is our second header in a row
+							h->isCompress=1;
+							break;
+						}else{
+							h->isCompress=0; // start a new potential compress
+							goto switchcompresstype;
+						}
+					case 0: // just add the byte and set it as potentially compressable
+					{
+						unsigned char _myZero = 0;
+						if (addToSave(h,buff,1)==-2 || addToSave(h,&_myZero,1)==-2){
+							return -2;
+						}
+						h->isCompress=-1;
+						break;
+					}
+					case 1: // continue the compress
+					{
+						if (_curByte==h->data[h->curUsed-3]){ // init the compress if it's the same byte
+							// convert from big endian
+							uint16_t _curCount = (((h->data[h->curUsed-2] & 0x7f) << 8) | h->data[h->curUsed-1]);
+							if (_curCount==32767){ // max reached. start a new compress if you want this.
+								h->isCompress=0;
+								goto switchcompresstype;
+							}
+							// increment it
+							++_curCount;
+							// write it again as big endian
+							_curCount = htobe16(_curCount);
+							h->data[h->curUsed-2] = ((unsigned char*)(&_curCount))[0] | 0x80;
+							h->data[h->curUsed-1] = ((unsigned char*)(&_curCount))[1];
+							break;
+						}else{
+							h->isCompress=0; // start a new potential compress
+							goto switchcompresstype;
+						}
+						
+					}
+				}
+				
+			}else{ // for a regular packet, just add the byte
+				h->isCompress=0;
+				if (addToSave(h,buff,1)==-2){
+					return -2;
+				}
+				// write the byte that tells if packet data follows
+				unsigned char _nextIsPacketData=h->saveThisContent;
+				if (addToSave(h,&_nextIsPacketData,1)==-2){
+					return -2;
+				}
+			}
 			h->headerProgress=0;
-			// write the byte that tels if packet data follows
-			unsigned char _nextIsPacketData=h->saveThisContent;
-			addToSave(h,&_nextIsPacketData,1);
 		}else{
+			// save the current packet header byte
+			if (addToSave(h,buff,1)==-2){
+				return -2;
+			}
 			h->headerProgress++;
 		}
-		if (addToSave(h,buff,1)==-2){
-			return -2;
-		}
 		++buff;
-		if (--size!=0){
+		if (--size!=0){ // let's go again!
 			goto top;
 		}
 	}else{ // just doing more of the packet. check for the end.
@@ -224,6 +282,7 @@ void initHeaderBak(struct headerBak* h){
 	h->size=0;
 	h->curLeft=0;
 	h->headerProgress=0;
+	h->isCompress=0;
 }
 void initInfo(struct info* i){
 	i->curHash=crc32(0L, Z_NULL, 0);
@@ -268,14 +327,11 @@ signed char getFileSize(FILE* fp, size_t* ret){
 	return 0;
 }
 signed char woarcInitSource(size_t i, struct fileMeta* infoDest, void** srcDest, void* _userData){
-	if (!(*srcDest=fopen(((struct fileCallInfo*)_userData)->filenames[i],"rb"))){
+	struct fileCallInfo* _passedInfo = _userData;
+	if (!(*srcDest=fopen(_passedInfo->fileList[i]->filename,"rb"))){
 		return -2;
 	}
-	size_t _gotLen;
-	if (getFileSize(*srcDest,&_gotLen)){
-		return -2;
-	}
-	infoDest->len=_gotLen;
+	infoDest->len=_passedInfo->fileList[i]->size;
 	infoDest->lastModified=0;
 	return 0;
 }
@@ -284,7 +340,7 @@ signed char woarcCloseSource(size_t i, void* _closeThis, void* _userData){
 }
 signed char woarcGetFilename(size_t i, char** dest, void* _userData){
 	struct fileCallInfo* _info = _userData;
-	*dest=_info->filenames[i]+strlen(_info->rootDir);
+	*dest=_info->fileList[i]->filename+strlen(_info->rootDir);
 	return 0;
 }
 signed char woarcGetComment(size_t i, char** dest, void* _userData){
@@ -308,14 +364,9 @@ signed char woarcGetFileProp(size_t i, uint8_t* _propDest, uint16_t* _propPropDe
 	return 0;
 }
 //////////////
-struct compressState* newReadyCompressState(int _fileCount, char** _fileList, char* _rootDir){
-	// init archive maker
-	struct fileCallInfo* i = malloc(sizeof(struct fileCallInfo));
-	i->filenames=_fileList;
-	i->rootDir=_rootDir;
-	struct compressState* s = newState(_fileCount);
+struct compressState* allocCompressStateWithCallback(){
+	struct compressState* s = allocCompressState();
 	struct userCallbacks* c = getCallbacks(s);
-	c->userData=i; // see the usage of the passed userdata in the source open functions
 	c->initSourceFunc=woarcInitSource;
 	c->closeSourceFunc=woarcCloseSource;
 	c->getFilenameFunc=woarcGetFilename;
@@ -355,11 +406,16 @@ char tinyReadFile(const char* _file, size_t* _retSize, char*** _retArray){
 		}
 		if (_curArrayElems>=_curMaxArray){
 			_curMaxArray+=10;
-			*_retArray = realloc(*_retArray,sizeof(char*)*_curMaxArray);
+			if (!(*_retArray = realloc(*_retArray,sizeof(char*)*_curMaxArray))){
+				fprintf(stderr,"tinyReadFile alloc failed\n");
+				_ret=1;
+				goto cleanup;
+			}
 		}
 		removeNewline(_lastLine);
 		(*_retArray)[_curArrayElems++]=strdup(_lastLine);
 	}
+cleanup:
 	free(_lastLine);
 	fclose(fp);
 	*_retSize=_curArrayElems;
@@ -371,20 +427,53 @@ void freeTinyRead(size_t _arrLength, char** _arr){
 		free(_arr[i]);
 	}
 }
+
+// will remove things from _allFileList and put them into _destList
+signed char getGoodFileList(size_t _maxSize, struct newFile** _allFileList, size_t _allFileListLen, struct newFile*** _destList, size_t* _destSize){
+	struct nList* _myList=NULL;
+	struct nList** _adder = initSpeedyAddnList(&_myList);
+	*_destSize=0;
+	size_t _curSize=_maxSize;
+	size_t i;
+	for (i=0;i<_allFileListLen;++i){
+		if (_allFileList[i] && _allFileList[i]->size<=_curSize){
+			_curSize-=_allFileList[i]->size;
+			if (!(_adder=speedyAddnList(_adder, _allFileList[i]))){
+				return -2;
+			}
+			++(*_destSize);
+			_allFileList[i]=NULL;
+		}
+	}
+	endSpeedyAddnList(_adder);
+	if (*_destSize==0){
+		fprintf(stderr,"todo - partial file code\n");
+		return -2;
+	}
+	// convert to array for happy fun times
+	*_destList = malloc(sizeof(struct newFile*)*(*_destSize));
+	i=0;
+	ITERATENLIST(_myList,{
+			((*_destList)[i++])=_curnList->data;
+		});
+	freenList(_myList,0);
+	return 0;
+}
+
 #define MYTESTFOLDER "/tmp/testfolder/"
 int main(int argc, char** args){
 	///////////////////////////////////
 	// init get filenames
 	///////////////////////////////////
 	forceArgEndInSlash(MYTESTFOLDER);
-	size_t _numNew;
+	size_t _newListLen;
 	struct newFile** _newFileList;
-	getNewFiles(MYTESTFOLDER,"/tmp/inc","/tmp/exc","/tmp/lastseen",&_numNew,&_newFileList);
+	getNewFiles(MYTESTFOLDER,/*"/tmp/inc"*/NULL,/*"/tmp/exc"*/NULL,"/tmp/lastseen",&_newListLen,&_newFileList);
+	size_t _newFilesLeft=_newListLen;
 	int i;
-	for (i=0;i<_numNew;++i){
+	for (i=0;i<_newListLen;++i){
 		printf("%ld;%d;%s\n",_newFileList[i]->size,_newFileList[i]->type,_newFileList[i]->filename);
 	}
-	
 	///////////////////////////////////
 	// init gpg
 	///////////////////////////////////
@@ -418,32 +507,54 @@ int main(int argc, char** args){
 	failIfError(gpgme_set_protocol(_myContext,GPGME_PROTOCOL_OpenPGP),"gpgme_set_protocol");
 	gpgme_set_offline(_myContext,1);
 	///////////////////////////////////
+	// partial compress state init
+	///////////////////////////////////
+	struct compressState* _myCompress = allocCompressStateWithCallback();
+	struct fileCallInfo* _compressInfo;
+	if (!(_compressInfo=malloc(sizeof(struct fileCallInfo)))){
+		fprintf(stderr,"out of memory on alloc compress info\n");
+		goto cleanup;
+	}
+	getCallbacks(_myCompress)->userData=_compressInfo;
+	///////////////////////////////////
 	// disc init
 	// from here on out, do not use exit(1)
 	////////////////////////////////////
 	// TODO - disc init
+
+	///////////////////////////////////
+	///////////////////////////////////
+	///////////////////////////////////
+	// LOOP STARTS HERE
+	///////////////////////////////////
+	///////////////////////////////////
+	///////////////////////////////////
 	
 	///////////////////////////////////
 	// get filenames. this depends on free space on current disc
 	///////////////////////////////////
-	char* testfilenames[3]={
-		"/tmp/a",
-		"/tmp/b",
-		"/tmp/c",
-	};
-	struct compressState* s = newReadyCompressState(3,testfilenames,"/tmp/");
+	size_t _numChosenFiles;
+	if (getGoodFileList(1000000000,_newFileList,_newListLen,&(_compressInfo->fileList),&_numChosenFiles)){
+		fprintf(stderr,"getGoodFileList failed\n");
+		goto cleanup;
+	}
+	// realloc the state to the new number of files
+	if (initCompressState(_myCompress,_numChosenFiles)==-2){
+		fprintf(stderr,"error in initCompressState for %ld new files\n",_numChosenFiles);
+		goto cleanup;
+	}
 
 	///////////////////////////////////
 	// Do the assemble, encrypt, write
 	///////////////////////////////////
-	_myInfo.assembleState=s;
+	_myInfo.assembleState=_myCompress;
 	if(gpgme_op_encrypt(_myContext,NULL, GPGME_ENCRYPT_NO_COMPRESS | GPGME_ENCRYPT_SYMMETRIC,_myIn,_myOut)!=GPG_ERR_NO_ERROR){
 		fprintf(stderr,"gpgme_op_encrypt error\n");
 		goto cleanup;
 	}
 	// write the rest of the file
 	if (fputc(0,_myInfo.testout)==EOF){
-		fprintf(stderr,"io error\n");
+		fprintf(stderr,"post write error 1\n");
 		goto cleanup;
 	}
 	if (fwrite(METADATAMAGIC,1,strlen(METADATAMAGIC),_myInfo.testout)!=strlen(METADATAMAGIC) ||
@@ -451,9 +562,34 @@ int main(int argc, char** args){
 		write64(_myInfo.testout,_myInfo.hInfo.curUsed)==-2 ||
 		fwrite(_myInfo.hInfo.data,1,_myInfo.hInfo.curUsed,_myInfo.testout)!=_myInfo.hInfo.curUsed){
 
-			fprintf(stderr,"write error\n");
+			fprintf(stderr,"post write error 2\n");
 			goto cleanup;
 	}
+
+	///////////////////////////////////
+	// finish disc write
+	///////////////////////////////////
+	// TODO
+
+	
+	///////////////////////////////////
+	// verify disc
+	///////////////////////////////////
+	// TODO
+
+	////////////
+	// rewrite the last seen file to reflect that we've written this new stuff
+	// TODO
+
+	_newFilesLeft-=_numChosenFiles;
+	///////////////////////////////////
+	///////////////////////////////////
+	///////////////////////////////////
+	// LOOP ENDS HERE
+	///////////////////////////////////
+	///////////////////////////////////
+	///////////////////////////////////
+	
 
 	///////////////////////////////////
 cleanup:

@@ -19,7 +19,7 @@ struct nList{
 	void* data;
 };
 
-struct nList* addnList(struct nList** _passed);
+//struct nList* addnList(struct nList** _passed);
 void freenList(struct nList* _freeThis, char _freeMemory);
 void freenListEntry(struct nList* _freeThis, char _freeMemory);
 // Makes an empty node. If you want to make a new list, set your first node to NULL
@@ -27,7 +27,7 @@ struct nList* lowNewnList();
 int nListLen(struct nList* _passed);
 struct nList* getnList(struct nList* _passed, int _index);
 struct nList* removenList(struct nList** _removeFrom, int _removeIndex);
-struct nList* insertnList(struct nList** _passedList, int _index);
+//struct nList* insertnList(struct nList** _passedList, int _index);
 void appendnList(struct nList** _source, struct nList* _addThis);
 // Pass the pointer to your dest list. Store the return value in another variable.
 struct nList** initSpeedyAddnList(struct nList** _passedList);

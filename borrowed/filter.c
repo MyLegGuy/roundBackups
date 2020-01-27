@@ -10,7 +10,7 @@
 #include "goodLinkedList.h"
 #include "../main.h"
 #include "filter.h"
-void fixFilter(char* _filter){
+void fixFilter(unsigned char* _filter){
 	int i;
 	int _cachedStrlen = strlen(_filter);
 	for (i=0;i<_cachedStrlen;++i){
