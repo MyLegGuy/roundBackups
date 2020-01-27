@@ -1,0 +1,4 @@
+vgcore.*
+*.out
+*.a
+*.o

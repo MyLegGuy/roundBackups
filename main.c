@@ -1,3 +1,4 @@
+// note: https://www.gnu.org/software/libc/manual/html_node/Cleanups-on-Exit.html
 #include <stdlib.h>
 #include <stdint.h>
 #include <errno.h>
@@ -7,7 +8,13 @@
 #include <zlib.h>
 #include <sys/stat.h>
 #include <endian.h>
+
+#include "config.h"
 #include <woarcassemble.h>
+#include "borrowed/goodLinkedList.h"
+#include "borrowed/filter.h"
+#include "main.h"
+#include "newFileGetter.h"
 
 #define METADATAMAGIC "ROUNDEND"
 
@@ -41,12 +48,26 @@ struct fileCallInfo{
 	char* rootDir; // ends in a slash. chop everything off the filename past this. 
 };
 
+//////////////////
+void removeNewline(char* _toRemove){
+	int _cachedStrlen = strlen(_toRemove);
+	if (_cachedStrlen==0){
+		return;
+	}
+	if (_toRemove[_cachedStrlen-1]==0x0A){ // Last char is UNIX newline
+		if (_cachedStrlen>=2 && _toRemove[_cachedStrlen-2]==0x0D){ // If it's a Windows newline
+			_toRemove[_cachedStrlen-2]='\0';
+		}else{ // Well, it's at very least a UNIX newline
+			_toRemove[_cachedStrlen-1]='\0';
+		}
+	}
+}
+//////////////////
 // save all of this
 #define REALLOCINCREMENT 50
 signed char addToSave(struct headerBak* h, const unsigned char* buff, size_t addNum){
 	uint64_t _destUsed=h->curUsed+addNum;
 	if (_destUsed>=h->size){
-		
 		uint64_t _newSize=h->size+REALLOCINCREMENT;
 		if (_destUsed>=_newSize){
 			_newSize=_destUsed+REALLOCINCREMENT;
@@ -281,20 +302,18 @@ signed char woarcReadData(void* src, char* dest, size_t requested, size_t* actua
 	}
 	return 0;
 }
+signed char woarcGetFileProp(size_t i, uint8_t* _propDest, uint16_t* _propPropDest, void* _userData){
+	*_propDest=0;
+	*_propPropDest=0;
+	return 0;
+}
 //////////////
-#define TESTCOUNT 3
-int main(int argc, char** args){
-	// init compress state
-	char* fns[TESTCOUNT]={
-		"/tmp/a",
-		"/tmp/b",
-		"/tmp/c",
-	};
+struct compressState* newReadyCompressState(int _fileCount, char** _fileList, char* _rootDir){
 	// init archive maker
 	struct fileCallInfo* i = malloc(sizeof(struct fileCallInfo));
-	i->filenames=fns;
-	i->rootDir="/tmp/";
-	struct compressState* s = newState(TESTCOUNT);
+	i->filenames=_fileList;
+	i->rootDir=_rootDir;
+	struct compressState* s = newState(_fileCount);
 	struct userCallbacks* c = getCallbacks(s);
 	c->userData=i; // see the usage of the passed userdata in the source open functions
 	c->initSourceFunc=woarcInitSource;
@@ -302,15 +321,78 @@ int main(int argc, char** args){
 	c->getFilenameFunc=woarcGetFilename;
 	c->getCommentFunc=woarcGetComment;
 	c->getSourceData=woarcReadData;
+	c->getPropFunc=woarcGetFileProp;
+	return s;
+}
 
+//////////////
+// may exit(1)
+void forceArgEndInSlash(const char* _passedFolder){
+	int _cachedLen = strlen(_passedFolder);
+	if (!(_cachedLen && _passedFolder[_cachedLen-1]==SEPARATOR)){
+		fprintf(stderr,"expected string to end with %c: \"%s\"\n",SEPARATOR,_passedFolder);
+		exit(1);
+	}
+}
+// read file into array
+char tinyReadFile(const char* _file, size_t* _retSize, char*** _retArray){
+	*_retArray=NULL;
+	*_retSize=0;
+	FILE* fp = fopen(_file,"rb");
+	if (fp==NULL){
+		return 1;
+	}
+	char _ret=0;
+	size_t _curMaxArray=0;
+	size_t _curArrayElems=0;
+	size_t _lineSize=0;
+	char* _lastLine=NULL;
+	while (1){
+		errno=0;
+		if (getline(&_lastLine,&_lineSize,fp)==-1){
+			_ret=(errno!=0);
+			break;
+		}
+		if (_curArrayElems>=_curMaxArray){
+			_curMaxArray+=10;
+			*_retArray = realloc(*_retArray,sizeof(char*)*_curMaxArray);
+		}
+		removeNewline(_lastLine);
+		(*_retArray)[_curArrayElems++]=strdup(_lastLine);
+	}
+	free(_lastLine);
+	fclose(fp);
+	*_retSize=_curArrayElems;
+	return _ret;
+}
+void freeTinyRead(size_t _arrLength, char** _arr){
+	int i;
+	for (i=0;i<_arrLength;++i){
+		free(_arr[i]);
+	}
+}
+#define MYTESTFOLDER "/tmp/testfolder/"
+int main(int argc, char** args){
+	///////////////////////////////////
+	// init get filenames
+	///////////////////////////////////
+	forceArgEndInSlash(MYTESTFOLDER);
+	size_t _numNew;
+	struct newFile** _newFileList;
+	getNewFiles(MYTESTFOLDER,"/tmp/inc","/tmp/exc","/tmp/lastseen",&_numNew,&_newFileList);
+	int i;
+	for (i=0;i<_numNew;++i){
+		printf("%ld;%d;%s\n",_newFileList[i]->size,_newFileList[i]->type,_newFileList[i]->filename);
+	}
+	
+	///////////////////////////////////
 	// init gpg
+	///////////////////////////////////
 	fprintf(stderr,"version: %s\n",gpgme_check_version(NULL));
 	failIfError(gpgme_engine_check_version(GPGME_PROTOCOL_OpenPGP),"openpgp engine check");
-	
 	// init pass info
 	struct info _myInfo;
 	initInfo(&_myInfo);
-	_myInfo.assembleState=s;
 	void* _myHandle=&_myInfo;
 	_myInfo.testout = fopen("/tmp/arcout","wb");
 	// init in
@@ -335,22 +417,46 @@ int main(int argc, char** args){
 	failIfError(gpgme_new(&_myContext),"gpgme_new");
 	failIfError(gpgme_set_protocol(_myContext,GPGME_PROTOCOL_OpenPGP),"gpgme_set_protocol");
 	gpgme_set_offline(_myContext,1);
-	//gpgme_set_passphrase_cb(_myContext,myGetPassword,_myHandle);
-	// Do the encryption
+	///////////////////////////////////
+	// disc init
+	// from here on out, do not use exit(1)
+	////////////////////////////////////
+	// TODO - disc init
+	
+	///////////////////////////////////
+	// get filenames. this depends on free space on current disc
+	///////////////////////////////////
+	char* testfilenames[3]={
+		"/tmp/a",
+		"/tmp/b",
+		"/tmp/c",
+	};
+	struct compressState* s = newReadyCompressState(3,testfilenames,"/tmp/");
+
+	///////////////////////////////////
+	// Do the assemble, encrypt, write
+	///////////////////////////////////
+	_myInfo.assembleState=s;
 	if(gpgme_op_encrypt(_myContext,NULL, GPGME_ENCRYPT_NO_COMPRESS | GPGME_ENCRYPT_SYMMETRIC,_myIn,_myOut)!=GPG_ERR_NO_ERROR){
 		fprintf(stderr,"gpgme_op_encrypt error\n");
-		exit(1);
+		goto cleanup;
 	}
-	gpgme_release(_myContext);
 	// write the rest of the file
 	if (fputc(0,_myInfo.testout)==EOF){
 		fprintf(stderr,"io error\n");
+		goto cleanup;
 	}
 	if (fwrite(METADATAMAGIC,1,strlen(METADATAMAGIC),_myInfo.testout)!=strlen(METADATAMAGIC) ||
 		write32(_myInfo.testout,_myInfo.curHash)==-2 ||
 		write64(_myInfo.testout,_myInfo.hInfo.curUsed)==-2 ||
 		fwrite(_myInfo.hInfo.data,1,_myInfo.hInfo.curUsed,_myInfo.testout)!=_myInfo.hInfo.curUsed){
 
-		fprintf(stderr,"write error\n");
+			fprintf(stderr,"write error\n");
+			goto cleanup;
 	}
+
+	///////////////////////////////////
+cleanup:
+	gpgme_release(_myContext);
+	// TODO - drive cleanup
 }

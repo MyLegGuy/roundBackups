@@ -1,0 +1,9 @@
+Format of the disc image:
+
+#define TOPBACKUPBYTES 100
+
+<gpg encrypted worried archive>
+<0x00> (this can be recognized because no pgp tag header can start without bit 7 set or with tag id 0.)
+<uint32_t: crc32 of encrypted worried archive>
+uint64_t numPacketBackupData
+(numPacketBackupData) bytes of packet headers
