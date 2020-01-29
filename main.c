@@ -29,6 +29,9 @@
 // most bytes read at once when verifying disc
 #define MAXVERIFYHASHBUFF 1000 // 1k
 
+#define IOMODE_FILE 0
+#define IOMODE_DISC 1
+
 #define TOPBACKUPBYTES 100
 struct headerBak{
 	/*
@@ -47,12 +50,14 @@ struct headerBak{
 	uint64_t curLeft;
 	char saveThisContent;
 };
-struct info{
+struct gpgInfo{
 	struct headerBak hInfo;
 	uLong curHash;
 	struct compressState* assembleState;
 	char archiveDoneMaking;
 	//
+	char iomode;
+	
 	FILE* testout;
 };
 struct fileCallInfo{
@@ -268,7 +273,7 @@ top:
 	return 0;
 }
 ssize_t myWrite(void *handle, const void *buffer, size_t size){
-	struct info* _myInfo = handle;
+	struct gpgInfo* _myInfo = handle;
 	if (processHeaderBak(&_myInfo->hInfo,buffer,size)==-2){
 		errno=EIO;
 		return -1;
@@ -283,7 +288,7 @@ ssize_t myWrite(void *handle, const void *buffer, size_t size){
 }
 // return n bytes read, 0 on EOF, -1 on error
 ssize_t myRead(void *handle, void *buffer, size_t size){
-	struct info* _myInfo = handle;
+	struct gpgInfo* _myInfo = handle;
 	if (_myInfo->archiveDoneMaking){
 		return 0;
 	}
@@ -306,7 +311,7 @@ void initHeaderBak(struct headerBak* h){
 	h->headerProgress=0;
 	h->isCompress=0;
 }
-void initInfo(struct info* i){
+void initInfo(struct gpgInfo* i){
 	i->curHash=crc32(0L, Z_NULL, 0);
 	i->archiveDoneMaking=0;
 	initHeaderBak(&i->hInfo);
@@ -462,6 +467,7 @@ void freeTinyRead(size_t _arrLength, char** _arr){
 	for (i=0;i<_arrLength;++i){
 		free(_arr[i]);
 	}
+	free(_arr);
 }
 
 // will remove things from _allFileList and put them into _destList
@@ -646,7 +652,6 @@ signed char verifyDisc(const char* _filename){
 				if (read32(fp,&_readHash)){
 					goto earlyend;
 				}
-				printf("%u;%ld\n",_readHash,_curHash);
 				_ret=(_readHash==((uint32_t)_curHash));
 				goto cleanup;
 			}
@@ -663,11 +668,35 @@ cleanup:
 	return _ret;
 }
 
+// note that _fromHere and _bigList are both already sorted from biggest to smallest
+void shoveBackInBigList(struct newFile** _fromHere, size_t _fromHereSize, struct newFile** _bigList, size_t _maxBigList){
+	// take things from _fromHere and shove them back into the null slots of _bigList
+	size_t i;
+	size_t _fromFilesPut=0;
+	size_t _lastFreeSlot;
+	for (i=0;i<_maxBigList;++i){
+		if (!_bigList[i]){
+			if (_bigList[i]->size<_fromHere[_fromFilesPut]->size){ // if the next file we'll put should go before this one
+				_bigList[_lastFreeSlot]=_fromHere[_fromFilesPut];
+				if (++_fromFilesPut==_fromHereSize){
+					return;
+				}
+			}
+		}else{
+			_lastFreeSlot=i;
+		}
+	}
+	// if we're here, that means we reached the end and still have files left
+	// we have all the smallest files in our array. so just put them in.
+	// it's guarentted that the number of files we have left, there are at least that many open slots at the right end of the array
+	for (i=_maxBigList-(_fromHereSize-_fromFilesPut);_fromFilesPut!=_fromHereSize;++_fromFilesPut,++i){
+		_bigList[i]=_fromHere[_fromFilesPut];
+	}
+}
+
 #define MYTESTFOLDER "/tmp/testfolder/"
 #define TESTLASTSEEN "/tmp/lastseen"
 int main(int argc, char** args){
-	printf("%d\n",verifyDisc("/tmp/arcout"));
-	return 0;
 	///////////////////////////////////
 	// init get filenames
 	///////////////////////////////////
@@ -675,6 +704,10 @@ int main(int argc, char** args){
 	size_t _newListLen;
 	struct newFile** _newFileList;
 	getNewFiles(MYTESTFOLDER,/*"/tmp/inc"*/NULL,/*"/tmp/exc"*/NULL,TESTLASTSEEN,&_newListLen,&_newFileList);
+	if (_newListLen==0){
+		fprintf(stderr,"no new files found\n");
+		return 1;
+	}
 	size_t _newFilesLeft=_newListLen;
 	int i;
 	for (i=0;i<_newListLen;++i){
@@ -686,7 +719,7 @@ int main(int argc, char** args){
 	fprintf(stderr,"version: %s\n",gpgme_check_version(NULL));
 	failIfError(gpgme_engine_check_version(GPGME_PROTOCOL_OpenPGP),"openpgp engine check");
 	// init pass info
-	struct info _myInfo;
+	struct gpgInfo _myInfo;
 	initInfo(&_myInfo);
 	void* _myHandle=&_myInfo;
 	// init in
@@ -738,6 +771,8 @@ int main(int argc, char** args){
 	char _lastTestFile[255];
 	int __testfilenameNum=0;	
 	do{
+		// reset state info
+		initInfo(&_myInfo);
 		//////////////////////////////
 		// Open a new disc
 		//////////////////////////////
@@ -748,7 +783,8 @@ int main(int argc, char** args){
 		// get filenames. this depends on free space on current disc
 		///////////////////////////////////
 		size_t _numChosenFiles;
-		if (getGoodFileList(1000000000,_newFileList,_newListLen,&(_compressInfo->fileList),&_numChosenFiles)){
+		//1000000000
+		if (getGoodFileList(1000000,_newFileList,_newListLen,&(_compressInfo->fileList),&_numChosenFiles)){
 			fprintf(stderr,"getGoodFileList failed\n");
 			goto cleanup;
 		}
@@ -767,7 +803,7 @@ int main(int argc, char** args){
 		}
 		// write the rest of the file
 		if (fputc(0,_myInfo.testout)==EOF){
-			fprintf(stderr,"post write error 1\n");
+			perror("post write error 1");
 			goto cleanup;
 		}
 		if (fwrite(METADATAMAGIC,1,strlen(METADATAMAGIC),_myInfo.testout)!=strlen(METADATAMAGIC) ||
@@ -775,32 +811,30 @@ int main(int argc, char** args){
 			write64(_myInfo.testout,_myInfo.hInfo.curUsed)==-2 ||
 			fwrite(_myInfo.hInfo.data,1,_myInfo.hInfo.curUsed,_myInfo.testout)!=_myInfo.hInfo.curUsed){
 
-			fprintf(stderr,"post write error 2\n");
+			perror("post write error 2");
 			goto cleanup;
 		}
 
 		///////////////////////////////////
 		// finish disc write
 		///////////////////////////////////
-		// TODO
-		fclose(_myInfo.testout);
+		if (fclose(_myInfo.testout)==EOF){
+			perror("finish write");
+		}
 	
 		///////////////////////////////////
 		// verify disc
 		///////////////////////////////////
 		signed char _doUpdateSeen=verifyDisc(_lastTestFile);
-		if (_doUpdateSeen==-1){
-			fprintf(stderr,"disc verification failed.\n");
-			fprintf(stderr,"TODO - option to retry.\n");
-			goto cleanup;
-		}
-		// TODO
-		if (!_doUpdateSeen){
+		if (_doUpdateSeen!=1){ // if it's bad
 			if (forwardUntil("mybodyisready")){
 				goto cleanup;
 			}
-			fprintf(stderr,"TODO - if you insert a bigger or smaller disc here, sad times will be upon us. especially smaller discs.\n");
-			fprintf(stderr,"disc corrupt. ignore? (y/n)\n");
+			if (_doUpdateSeen==-1){
+				fprintf(stderr,"disc verification failed. ignore? (y/n)\n");
+			}else{
+				fprintf(stderr,"disc corrupt. ignore? (y/n)\n");
+			}
 			signed char _doRetry = getYesNoIn();
 			if (_doRetry==-1){
 				goto cleanup;
@@ -817,8 +851,11 @@ int main(int argc, char** args){
 				}
 			}else{
 			putfilesback:
-				// TODO - put files back into the array
-				goto cleanup; // TEMP
+				// put the files back into the big array.
+				shoveBackInBigList(_compressInfo->fileList,_numChosenFiles,_newFileList,_newListLen);
+				_doUpdateSeen=0;
+				free(_compressInfo->fileList);
+				_compressInfo->fileList=NULL;
 			}
 		}
 		///////////////////////////////////
@@ -826,7 +863,7 @@ int main(int argc, char** args){
 		///////////////////////////////////
 		if (_doUpdateSeen){
 			// rewrite the last seen file to reflect that we've written this new stuff
-			if (appendToLastSeenList(TESTLASTSEEN,_compressInfo->fileList,_numChosenFiles)){
+			if (appendToLastSeenList(TESTLASTSEEN,_compressInfo->rootDir,_compressInfo->fileList,_numChosenFiles)){
 				goto cleanup;
 			}
 		}
@@ -850,6 +887,10 @@ int main(int argc, char** args){
 	
 
 	///////////////////////////////////
+	// free nonsense just to supress valgrind errors
+	///////////////////////////////////
+	free(_newFileList);
+	
 cleanup:
 	gpgme_release(_myContext);
 	// TODO - drive cleanup

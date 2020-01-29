@@ -148,18 +148,20 @@ void getNewFiles(const char* _rootFolder, const char* _includeListFilename, cons
 	// sort the array by size with biggest first
 	qsort(*_retList,*_retLen,sizeof(struct newFile*),newFileSizeCompare);
 }
-signed char appendToLastSeenList(const char* _lastSeenFilename, struct newFile** _fileInfo, size_t _numFiles){
+signed char appendToLastSeenList(const char* _lastSeenFilename, const char* _rootDir, struct newFile** _fileInfo, size_t _numFiles){
 	FILE* fp = fopen(_lastSeenFilename,"ab");
 	if (!fp){
 		perror("appendToLastSeenList");
 		return -2;
 	}
+	size_t _cachedRootLen = strlen(_rootDir);
 	size_t i;
 	for (i=0;i<_numFiles;++i){
 		if (fputc('\n',fp)==EOF){
 			goto err;
 		}
-		if (fwrite(_fileInfo[i]->filename,1,strlen(_fileInfo[i]->filename),fp)!=strlen(_fileInfo[i]->filename)){
+		const char* _writeStr = _fileInfo[i]->filename+_cachedRootLen;
+		if (fwrite(_writeStr,1,strlen(_writeStr),fp)!=strlen(_writeStr)){
 			goto err;
 		}
 	}
