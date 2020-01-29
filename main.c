@@ -1,4 +1,11 @@
+/*
+	Copyright (C) 2020  MyLegGuy
+	This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, version 3.
+	This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+	You should have received a copy of the GNU General Public License along with this program.  If not, see <https://www.gnu.org/licenses/>.
+*/
 // note: https://www.gnu.org/software/libc/manual/html_node/Cleanups-on-Exit.html
+// TODO - check permissions at the start for all passed files
 #include <stdlib.h>
 #include <stdint.h>
 #include <errno.h>
@@ -10,6 +17,7 @@
 #include <endian.h>
 
 #include "config.h"
+#include "userIn.h"
 #include <woarcassemble.h>
 #include "borrowed/goodLinkedList.h"
 #include "borrowed/filter.h"
@@ -17,6 +25,9 @@
 #include "newFileGetter.h"
 
 #define METADATAMAGIC "ROUNDEND"
+
+// most bytes read at once when verifying disc
+#define MAXVERIFYHASHBUFF 1000 // 1k
 
 #define TOPBACKUPBYTES 100
 struct headerBak{
@@ -50,18 +61,26 @@ struct fileCallInfo{
 };
 
 //////////////////
-void removeNewline(char* _toRemove){
+// returns 1 if line is empty
+char removeNewline(char* _toRemove){
 	int _cachedStrlen = strlen(_toRemove);
 	if (_cachedStrlen==0){
-		return;
+		return 1;
 	}
 	if (_toRemove[_cachedStrlen-1]==0x0A){ // Last char is UNIX newline
 		if (_cachedStrlen>=2 && _toRemove[_cachedStrlen-2]==0x0D){ // If it's a Windows newline
+			if (_cachedStrlen==2){
+				return 1;
+			}
 			_toRemove[_cachedStrlen-2]='\0';
 		}else{ // Well, it's at very least a UNIX newline
+			if (_cachedStrlen==1){
+				return 1;
+			}
 			_toRemove[_cachedStrlen-1]='\0';
 		}
 	}
+	return 0;
 }
 //////////////////
 // save all of this
@@ -83,6 +102,7 @@ signed char addToSave(struct headerBak* h, const unsigned char* buff, size_t add
 	return 0;
 }
 signed char processHeaderBak(struct headerBak* h, const unsigned char* buff, size_t size){
+	// NOTE - be very careful to apply any changes from here to verifyDisc function
 top:
 	if (!h->curLeft){
 		unsigned char _curByte=buff[0];
@@ -102,6 +122,8 @@ top:
 					if (h->packetType==4){ // (actually 3, but we added 1.)
 						fprintf(stderr,"indeterminate packet length in old packet format unsupported. why is this being used? is this even a packet header?\n");
 						return -2;
+					}else if (h->packetType==3){
+						h->packetType=4;
 					}
 				}else{ // new packet format
 					_gottenTag=((unsigned char)(_curByte<<2))>>2;
@@ -318,6 +340,14 @@ signed char write64(FILE* fp, uint64_t n){
 	return fwrite(&n,1,sizeof(uint64_t),fp)!=sizeof(uint64_t) ? -2  : 0;
 }
 //////////////
+signed char read32(FILE* fp, uint32_t* n){
+	if (fread(n,1,sizeof(uint32_t),fp)!=sizeof(uint32_t)){
+		return -2;
+	}
+	*n=le32toh(*n);
+	return 0;
+}
+//////////////
 signed char getFileSize(FILE* fp, size_t* ret){
 	struct stat st;
 	if (fstat(fileno(fp),&st)){
@@ -329,6 +359,7 @@ signed char getFileSize(FILE* fp, size_t* ret){
 signed char woarcInitSource(size_t i, struct fileMeta* infoDest, void** srcDest, void* _userData){
 	struct fileCallInfo* _passedInfo = _userData;
 	if (!(*srcDest=fopen(_passedInfo->fileList[i]->filename,"rb"))){
+		perror("woarcInitSource");
 		return -2;
 	}
 	infoDest->len=_passedInfo->fileList[i]->size;
@@ -351,6 +382,7 @@ signed char woarcReadData(void* src, char* dest, size_t requested, size_t* actua
 	*actual = fread(dest,1,requested,src);
 	if (*actual!=requested){
 		if (ferror(src)){
+			perror("woarcReadData");
 			return -2;
 		}else if (feof(src)){
 			return -1;
@@ -386,7 +418,7 @@ void forceArgEndInSlash(const char* _passedFolder){
 	}
 }
 // read file into array
-char tinyReadFile(const char* _file, size_t* _retSize, char*** _retArray){
+char readFileNoBlanks(const char* _file, size_t* _retSize, char*** _retArray){
 	*_retArray=NULL;
 	*_retSize=0;
 	FILE* fp = fopen(_file,"rb");
@@ -404,20 +436,24 @@ char tinyReadFile(const char* _file, size_t* _retSize, char*** _retArray){
 			_ret=(errno!=0);
 			break;
 		}
+		if (removeNewline(_lastLine)){ // skip blank lines
+			continue;
+		}
 		if (_curArrayElems>=_curMaxArray){
 			_curMaxArray+=10;
 			if (!(*_retArray = realloc(*_retArray,sizeof(char*)*_curMaxArray))){
-				fprintf(stderr,"tinyReadFile alloc failed\n");
+				fprintf(stderr,"readFileNoBlanks alloc failed\n");
 				_ret=1;
 				goto cleanup;
 			}
 		}
-		removeNewline(_lastLine);
 		(*_retArray)[_curArrayElems++]=strdup(_lastLine);
 	}
 cleanup:
 	free(_lastLine);
-	fclose(fp);
+	if (fclose(fp)==EOF){
+		return 1;
+	}
 	*_retSize=_curArrayElems;
 	return _ret;
 }
@@ -459,16 +495,186 @@ signed char getGoodFileList(size_t _maxSize, struct newFile** _allFileList, size
 	freenList(_myList,0);
 	return 0;
 }
+// returns -2 on invalid data
+// returns -1 on IO error
+// returns 0 on worked
+// returns 1 if this is the end of the pgp woarc file (0 read as tag byte)
+signed char lowReadPacketHeader(FILE* fp, signed char* _packetType, size_t* _destSize, uLong* _curHash){
+	unsigned char _numBuff[4];
+	int _curByte;
+	// tag byte
+	if (*_packetType!=-1){ // for partial length headers, skip the tag byte.
+		if ((_curByte=fgetc(fp))==EOF){
+			return -1;
+		}else if (_curByte==0){ // marks the end of the pgp file. this byte is not hashed.
+			return 1;
+		}
+		// put the byte into the buffer so that it can be hashed
+		_numBuff[0]=_curByte;
+		*_curHash=crc32_z(*_curHash,_numBuff,1);
+		//
+		if (!(_curByte & 64)){ // old packet format
+			*_packetType=1;
+			char _numBytes = (((unsigned char)(_curByte<<6))>>6)+1;
+			if (_numBytes==4){ // (actually 3, but we added 1.)
+				fprintf(stderr,"indeterminate packet length in old packet format unsupported. why is this being used? is this even a packet header?\n");
+				return -2;
+			}else if (_numBytes==3){
+				_numBytes=4;
+			}
+			*_destSize=0;
+			int i;
+			for (i=0;i<_numBytes;++i){
+				if ((_curByte=fgetc(fp))==EOF){
+					return -1;
+				}
+				unsigned char _tempByte=_curByte;
+				*_curHash=crc32_z(*_curHash,&_tempByte,1);
+				*_destSize|=(_tempByte<<((_numBytes-1-i)*8));
+			}
+			return 0;
+		}else{ // new packet format
+			*_packetType=0;
+		}
+	}else{
+		*_packetType=0;
+	}
+	// first byte
+	if ((_curByte=fgetc(fp))==EOF){
+		return -1;
+	}
+	_numBuff[0]=_curByte;
+	*_curHash=crc32_z(*_curHash,_numBuff,1);
+	if (*_packetType==0){ // new packet type
+		if (_curByte<=191){ // One-Octet Lengths
+			*_destSize=_curByte;
+			return 0;
+		}else if (_curByte>=224 && _curByte<255){ // partial packet
+			*_packetType=-1;
+			*_destSize=1<<(_numBuff[0] & 0x1F);
+			return 0;
+		}
+	}
+	// second byte
+	if ((_curByte=fgetc(fp))==EOF){
+		return -1;
+	}
+	_numBuff[1]=_curByte;
+	*_curHash=crc32_z(*_curHash,_numBuff+1,1);
+	if (*_packetType==0){ // new packet type
+		if (_numBuff[0]>=192 && _numBuff[0]<=223){ // Two-Octet Lengths
+			*_destSize=((_numBuff[0]-192)<<8)+192+_numBuff[1];
+			return 0;
+		}
+	}
+	// third byte
+	if ((_curByte=fgetc(fp))==EOF){
+		return -1;
+	}
+	_numBuff[2]=_curByte;
+	// fourth byte
+	if ((_curByte=fgetc(fp))==EOF){
+		return -1;
+	}
+	_numBuff[3]=_curByte;
+	*_curHash=crc32_z(*_curHash,_numBuff+2,2);
+	// fifth byte
+	if ((_curByte=fgetc(fp))==EOF){
+		return -1;
+	}
+	unsigned char _fifthByte=_curByte;
+	*_curHash=crc32_z(*_curHash,&_fifthByte,1);
+	if (_numBuff[0]!=255){
+		fprintf(stderr,"first byte isn't 255. is %d. bad five-octet length!\n",_numBuff[0]);
+		return -2;
+	}
+	*_destSize=(_numBuff[1] << 24) | (_numBuff[2] << 16) | (_numBuff[3] << 8)  | _fifthByte;
+	return 0;
+}
+// returns 1 if disc is good
+// returns 0 if disc is bad
+// returns -1 if failed
+signed char verifyDisc(const char* _filename){
+	FILE* fp = fopen(_filename,"rb");
+	if (!fp){
+		return -1;
+	}
+	char buff[MAXVERIFYHASHBUFF];
+	signed char _ret;
+	uLong _curHash = crc32(0L, Z_NULL, 0);
+	size_t _packetSize;
+	signed char _packetType=0; // if 0 then regular new packet. if -1 then partial length new packet. if > 0 then it's an old packet and the number is the number of length bytes.
+	while(1){
+		switch(lowReadPacketHeader(fp,&_packetType,&_packetSize,&_curHash)){
+			case -2:
+				fprintf(stderr,"actual data content error\n");
+			case -1:
+				goto earlyend;
+			case 0:
+				// read the rest and hash
+				while(1){
+					size_t _numRead;
+					if (_packetSize<MAXVERIFYHASHBUFF){
+						_numRead=_packetSize;
+					}else{
+						_numRead=MAXVERIFYHASHBUFF;
+					}
+					if (fread(buff,1,_numRead,fp)!=_numRead){
+						fprintf(stderr,"verifydisc packet content read error\n");
+						goto earlyend;
+					}
+					_curHash = crc32_z(_curHash,buff,_numRead);
+					if ((_packetSize-=_numRead)==0){
+						break;
+					}
+				}
+				break;
+			case 1: // read the hash and make sure they're the same
+			{
+				// check for METADATAMAGIC
+				int _magicLen=strlen(METADATAMAGIC);
+				char _readMagic[_magicLen];
+				if (fread(_readMagic,1,_magicLen,fp)!=_magicLen){
+					goto earlyend;
+				}
+				if (memcmp(_readMagic,METADATAMAGIC,_magicLen)!=0){
+					fprintf(stderr,"%s magic corrupt\n",METADATAMAGIC);
+					goto earlyend;
+				}
+				// read the hash
+				uint32_t _readHash;
+				if (read32(fp,&_readHash)){
+					goto earlyend;
+				}
+				printf("%u;%ld\n",_readHash,_curHash);
+				_ret=(_readHash==((uint32_t)_curHash));
+				goto cleanup;
+			}
+				break;
+		}
+	}
+	//
+earlyend:
+	_ret=-1;
+cleanup:
+	if (fclose(fp)==EOF){
+		perror("verifyDisc");
+	}
+	return _ret;
+}
 
 #define MYTESTFOLDER "/tmp/testfolder/"
+#define TESTLASTSEEN "/tmp/lastseen"
 int main(int argc, char** args){
+	printf("%d\n",verifyDisc("/tmp/arcout"));
+	return 0;
 	///////////////////////////////////
 	// init get filenames
 	///////////////////////////////////
 	forceArgEndInSlash(MYTESTFOLDER);
 	size_t _newListLen;
 	struct newFile** _newFileList;
-	getNewFiles(MYTESTFOLDER,/*"/tmp/inc"*/NULL,/*"/tmp/exc"*/NULL,"/tmp/lastseen",&_newListLen,&_newFileList);
+	getNewFiles(MYTESTFOLDER,/*"/tmp/inc"*/NULL,/*"/tmp/exc"*/NULL,TESTLASTSEEN,&_newListLen,&_newFileList);
 	size_t _newFilesLeft=_newListLen;
 	int i;
 	for (i=0;i<_newListLen;++i){
@@ -483,7 +689,6 @@ int main(int argc, char** args){
 	struct info _myInfo;
 	initInfo(&_myInfo);
 	void* _myHandle=&_myInfo;
-	_myInfo.testout = fopen("/tmp/arcout","wb");
 	// init in
 	// must stay around in memory: https://github.com/gpg/gpgme/blob/b182838f71d8349d6cd7be9ecfb859b893d09127/src/data-user.c#L101
 	struct gpgme_data_cbs _inCallbacks;
@@ -515,6 +720,7 @@ int main(int argc, char** args){
 		fprintf(stderr,"out of memory on alloc compress info\n");
 		goto cleanup;
 	}
+	_compressInfo->rootDir=MYTESTFOLDER;
 	getCallbacks(_myCompress)->userData=_compressInfo;
 	///////////////////////////////////
 	// disc init
@@ -529,59 +735,111 @@ int main(int argc, char** args){
 	///////////////////////////////////
 	///////////////////////////////////
 	///////////////////////////////////
-	
-	///////////////////////////////////
-	// get filenames. this depends on free space on current disc
-	///////////////////////////////////
-	size_t _numChosenFiles;
-	if (getGoodFileList(1000000000,_newFileList,_newListLen,&(_compressInfo->fileList),&_numChosenFiles)){
-		fprintf(stderr,"getGoodFileList failed\n");
-		goto cleanup;
-	}
-	// realloc the state to the new number of files
-	if (initCompressState(_myCompress,_numChosenFiles)==-2){
-		fprintf(stderr,"error in initCompressState for %ld new files\n",_numChosenFiles);
-		goto cleanup;
-	}
-
-	///////////////////////////////////
-	// Do the assemble, encrypt, write
-	///////////////////////////////////
-	_myInfo.assembleState=_myCompress;
-	if(gpgme_op_encrypt(_myContext,NULL, GPGME_ENCRYPT_NO_COMPRESS | GPGME_ENCRYPT_SYMMETRIC,_myIn,_myOut)!=GPG_ERR_NO_ERROR){
-		fprintf(stderr,"gpgme_op_encrypt error\n");
-		goto cleanup;
-	}
-	// write the rest of the file
-	if (fputc(0,_myInfo.testout)==EOF){
-		fprintf(stderr,"post write error 1\n");
-		goto cleanup;
-	}
-	if (fwrite(METADATAMAGIC,1,strlen(METADATAMAGIC),_myInfo.testout)!=strlen(METADATAMAGIC) ||
-		write32(_myInfo.testout,_myInfo.curHash)==-2 ||
-		write64(_myInfo.testout,_myInfo.hInfo.curUsed)==-2 ||
-		fwrite(_myInfo.hInfo.data,1,_myInfo.hInfo.curUsed,_myInfo.testout)!=_myInfo.hInfo.curUsed){
+	char _lastTestFile[255];
+	int __testfilenameNum=0;	
+	do{
+		//////////////////////////////
+		// Open a new disc
+		//////////////////////////////
+		sprintf(_lastTestFile,"/tmp/arcout%d",__testfilenameNum++);
+		_myInfo.testout = fopen(_lastTestFile,"wb");
+		
+		///////////////////////////////////
+		// get filenames. this depends on free space on current disc
+		///////////////////////////////////
+		size_t _numChosenFiles;
+		if (getGoodFileList(1000000000,_newFileList,_newListLen,&(_compressInfo->fileList),&_numChosenFiles)){
+			fprintf(stderr,"getGoodFileList failed\n");
+			goto cleanup;
+		}
+		// realloc the state to the new number of files
+		if (initCompressState(_myCompress,_numChosenFiles)==-2){
+			fprintf(stderr,"error in initCompressState for %ld new files\n",_numChosenFiles);
+			goto cleanup;
+		}
+		///////////////////////////////////
+		// Do the assemble, encrypt, write
+		///////////////////////////////////
+		_myInfo.assembleState=_myCompress;
+		if(gpgme_op_encrypt(_myContext,NULL, GPGME_ENCRYPT_NO_COMPRESS | GPGME_ENCRYPT_SYMMETRIC,_myIn,_myOut)!=GPG_ERR_NO_ERROR){
+			fprintf(stderr,"gpgme_op_encrypt error\n");
+			goto cleanup;
+		}
+		// write the rest of the file
+		if (fputc(0,_myInfo.testout)==EOF){
+			fprintf(stderr,"post write error 1\n");
+			goto cleanup;
+		}
+		if (fwrite(METADATAMAGIC,1,strlen(METADATAMAGIC),_myInfo.testout)!=strlen(METADATAMAGIC) ||
+			write32(_myInfo.testout,_myInfo.curHash)==-2 ||
+			write64(_myInfo.testout,_myInfo.hInfo.curUsed)==-2 ||
+			fwrite(_myInfo.hInfo.data,1,_myInfo.hInfo.curUsed,_myInfo.testout)!=_myInfo.hInfo.curUsed){
 
 			fprintf(stderr,"post write error 2\n");
 			goto cleanup;
-	}
+		}
 
-	///////////////////////////////////
-	// finish disc write
-	///////////////////////////////////
-	// TODO
-
+		///////////////////////////////////
+		// finish disc write
+		///////////////////////////////////
+		// TODO
+		fclose(_myInfo.testout);
 	
-	///////////////////////////////////
-	// verify disc
-	///////////////////////////////////
-	// TODO
-
-	////////////
-	// rewrite the last seen file to reflect that we've written this new stuff
-	// TODO
-
-	_newFilesLeft-=_numChosenFiles;
+		///////////////////////////////////
+		// verify disc
+		///////////////////////////////////
+		signed char _doUpdateSeen=verifyDisc(_lastTestFile);
+		if (_doUpdateSeen==-1){
+			fprintf(stderr,"disc verification failed.\n");
+			fprintf(stderr,"TODO - option to retry.\n");
+			goto cleanup;
+		}
+		// TODO
+		if (!_doUpdateSeen){
+			if (forwardUntil("mybodyisready")){
+				goto cleanup;
+			}
+			fprintf(stderr,"TODO - if you insert a bigger or smaller disc here, sad times will be upon us. especially smaller discs.\n");
+			fprintf(stderr,"disc corrupt. ignore? (y/n)\n");
+			signed char _doRetry = getYesNoIn();
+			if (_doRetry==-1){
+				goto cleanup;
+			}else if (_doRetry==1){ // yes, do ignore
+				fprintf(stderr,"Really ignore the problem? these files will not be rewritten.\n");
+				switch(getYesNoIn()){
+					case -1:
+						goto cleanup;
+					case 1:
+						_doUpdateSeen=1; // continue as if the disc was correct
+						break;
+					case 0:
+						goto putfilesback;
+				}
+			}else{
+			putfilesback:
+				// TODO - put files back into the array
+				goto cleanup; // TEMP
+			}
+		}
+		///////////////////////////////////
+		// finish up
+		///////////////////////////////////
+		if (_doUpdateSeen){
+			// rewrite the last seen file to reflect that we've written this new stuff
+			if (appendToLastSeenList(TESTLASTSEEN,_compressInfo->fileList,_numChosenFiles)){
+				goto cleanup;
+			}
+		}
+		// our current list of files is done. free it.
+		if (_compressInfo->fileList){
+			for (i=0;i<_numChosenFiles;++i){
+				free(_compressInfo->fileList[i]->filename);
+				free(_compressInfo->fileList[i]);
+			}
+			free(_compressInfo->fileList);
+			_newFilesLeft-=_numChosenFiles;
+		}
+	}while(_newFilesLeft!=0);
 	///////////////////////////////////
 	///////////////////////////////////
 	///////////////////////////////////

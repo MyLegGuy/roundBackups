@@ -101,7 +101,10 @@ int checkSingleIsNew(const char *fpath, const struct stat *sb, int typeflag, str
 			printf("Added %s\n",fpath);
 		}
 	}else{
-		if (typeflag!=FTW_D){
+		if (typeflag==FTW_DNR){
+			fprintf(stderr,"unreadable directory %s\n",fpath);
+			return 1;
+		}else if (typeflag!=FTW_D){
 			fprintf(stderr,"Unknown thing passed.\n%d:%s\n",typeflag,fpath);
 			return 1;
 		}
@@ -112,7 +115,7 @@ int checkSingleIsNew(const char *fpath, const struct stat *sb, int typeflag, str
 void getNewFiles(const char* _rootFolder, const char* _includeListFilename, const char* _excludeListFilename, const char* _seenListFilename, size_t* _retLen, struct newFile*** _retList){
 	struct nList* _linkedList=NULL;
 	struct checkNewInfo _checkInfo;
-	if (tinyReadFile(_seenListFilename,&_checkInfo.seenListSize,&_checkInfo.seenList)){
+	if (readFileNoBlanks(_seenListFilename,&_checkInfo.seenListSize,&_checkInfo.seenList)){
 		fprintf(stderr,"error reading %s\n",_seenListFilename);
 		exit(1);
 	}
@@ -144,4 +147,29 @@ void getNewFiles(const char* _rootFolder, const char* _includeListFilename, cons
 	freenList(_linkedList,0);
 	// sort the array by size with biggest first
 	qsort(*_retList,*_retLen,sizeof(struct newFile*),newFileSizeCompare);
+}
+signed char appendToLastSeenList(const char* _lastSeenFilename, struct newFile** _fileInfo, size_t _numFiles){
+	FILE* fp = fopen(_lastSeenFilename,"ab");
+	if (!fp){
+		perror("appendToLastSeenList");
+		return -2;
+	}
+	size_t i;
+	for (i=0;i<_numFiles;++i){
+		if (fputc('\n',fp)==EOF){
+			goto err;
+		}
+		if (fwrite(_fileInfo[i]->filename,1,strlen(_fileInfo[i]->filename),fp)!=strlen(_fileInfo[i]->filename)){
+			goto err;
+		}
+	}
+	if (fclose(fp)==EOF){
+		perror("appendToLastSeenList");
+		return -2;
+	}
+	return 0;
+err:
+	perror("appendToLastSeenList");
+	fclose(fp);
+	return -2;
 }
