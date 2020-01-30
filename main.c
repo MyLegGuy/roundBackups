@@ -17,6 +17,7 @@
 #include <endian.h>
 
 #include "config.h"
+#include "iomode.h"
 #include "userIn.h"
 #include <woarcassemble.h>
 #include "borrowed/goodLinkedList.h"
@@ -28,9 +29,6 @@
 
 // most bytes read at once when verifying disc
 #define MAXVERIFYHASHBUFF 1000 // 1k
-
-#define IOMODE_FILE 0
-#define IOMODE_DISC 1
 
 #define TOPBACKUPBYTES 100
 struct headerBak{
@@ -57,8 +55,7 @@ struct gpgInfo{
 	char archiveDoneMaking;
 	//
 	char iomode;
-	
-	FILE* testout;
+	void* out;
 };
 struct fileCallInfo{
 	struct newFile** fileList;
@@ -278,13 +275,8 @@ ssize_t myWrite(void *handle, const void *buffer, size_t size){
 		errno=EIO;
 		return -1;
 	}
-	
 	_myInfo->curHash = crc32_z(_myInfo->curHash,buffer,size);
-	int i;
-	for (i=0;i<size;++i){
-		fputc(((char*)buffer)[i],_myInfo->testout);
-	}
-	return size;
+	return iomodeWrite(_myInfo->out,_myInfo->iomode,buffer,size);
 }
 // return n bytes read, 0 on EOF, -1 on error
 ssize_t myRead(void *handle, void *buffer, size_t size){
@@ -310,6 +302,7 @@ void initHeaderBak(struct headerBak* h){
 	h->curLeft=0;
 	h->headerProgress=0;
 	h->isCompress=0;
+	h->packetType=0;
 }
 void initInfo(struct gpgInfo* i){
 	i->curHash=crc32(0L, Z_NULL, 0);
@@ -332,21 +325,21 @@ void failIfError(gpgme_error_t e, const char* _preMessage){
 /* 	return GPG_ERR_NO_ERROR; */
 /* } */
 //////////////
-signed char write16(FILE* fp, uint16_t n){
+signed char write16(void* _out, char _type, uint16_t n){
 	n = htole16(n);
-	return fwrite(&n,1,sizeof(uint16_t),fp)!=sizeof(uint16_t) ? -2 : 0;
+	return iomodeWriteFail(_out,_type,&n,sizeof(uint16_t));
 }
-signed char write32(FILE* fp, uint32_t n){
+signed char write32(void* _out, char _type, uint32_t n){
 	n = htole32(n);
-	return fwrite(&n,1,sizeof(uint32_t),fp)!=sizeof(uint32_t) ? -2 : 0;
+	return iomodeWriteFail(_out,_type,&n,sizeof(uint32_t));
 }
-signed char write64(FILE* fp, uint64_t n){
+signed char write64(void* _out, char _type, uint64_t n){
 	n = htole64(n);
-	return fwrite(&n,1,sizeof(uint64_t),fp)!=sizeof(uint64_t) ? -2  : 0;
+	return iomodeWriteFail(_out,_type,&n,sizeof(uint64_t));
 }
 //////////////
-signed char read32(FILE* fp, uint32_t* n){
-	if (fread(n,1,sizeof(uint32_t),fp)!=sizeof(uint32_t)){
+signed char read32(void* _out, char _type, uint32_t* n){
+	if (iomodeRead(_out,_type,n,sizeof(uint32_t))!=sizeof(uint32_t)){
 		return -2;
 	}
 	*n=le32toh(*n);
@@ -505,12 +498,12 @@ signed char getGoodFileList(size_t _maxSize, struct newFile** _allFileList, size
 // returns -1 on IO error
 // returns 0 on worked
 // returns 1 if this is the end of the pgp woarc file (0 read as tag byte)
-signed char lowReadPacketHeader(FILE* fp, signed char* _packetType, size_t* _destSize, uLong* _curHash){
+signed char lowReadPacketHeader(void* _out, char _type, signed char* _packetType, size_t* _destSize, uLong* _curHash){
 	unsigned char _numBuff[4];
 	int _curByte;
 	// tag byte
 	if (*_packetType!=-1){ // for partial length headers, skip the tag byte.
-		if ((_curByte=fgetc(fp))==EOF){
+		if ((_curByte=iomodeGetc(_out,_type))==EOF){
 			return -1;
 		}else if (_curByte==0){ // marks the end of the pgp file. this byte is not hashed.
 			return 1;
@@ -531,7 +524,7 @@ signed char lowReadPacketHeader(FILE* fp, signed char* _packetType, size_t* _des
 			*_destSize=0;
 			int i;
 			for (i=0;i<_numBytes;++i){
-				if ((_curByte=fgetc(fp))==EOF){
+				if ((_curByte=iomodeGetc(_out,_type))==EOF){
 					return -1;
 				}
 				unsigned char _tempByte=_curByte;
@@ -546,7 +539,7 @@ signed char lowReadPacketHeader(FILE* fp, signed char* _packetType, size_t* _des
 		*_packetType=0;
 	}
 	// first byte
-	if ((_curByte=fgetc(fp))==EOF){
+	if ((_curByte=iomodeGetc(_out,_type))==EOF){
 		return -1;
 	}
 	_numBuff[0]=_curByte;
@@ -562,7 +555,7 @@ signed char lowReadPacketHeader(FILE* fp, signed char* _packetType, size_t* _des
 		}
 	}
 	// second byte
-	if ((_curByte=fgetc(fp))==EOF){
+	if ((_curByte=iomodeGetc(_out,_type))==EOF){
 		return -1;
 	}
 	_numBuff[1]=_curByte;
@@ -574,18 +567,18 @@ signed char lowReadPacketHeader(FILE* fp, signed char* _packetType, size_t* _des
 		}
 	}
 	// third byte
-	if ((_curByte=fgetc(fp))==EOF){
+	if ((_curByte=iomodeGetc(_out,_type))==EOF){
 		return -1;
 	}
 	_numBuff[2]=_curByte;
 	// fourth byte
-	if ((_curByte=fgetc(fp))==EOF){
+	if ((_curByte=iomodeGetc(_out,_type))==EOF){
 		return -1;
 	}
 	_numBuff[3]=_curByte;
 	*_curHash=crc32_z(*_curHash,_numBuff+2,2);
 	// fifth byte
-	if ((_curByte=fgetc(fp))==EOF){
+	if ((_curByte=iomodeGetc(_out,_type))==EOF){
 		return -1;
 	}
 	unsigned char _fifthByte=_curByte;
@@ -600,18 +593,14 @@ signed char lowReadPacketHeader(FILE* fp, signed char* _packetType, size_t* _des
 // returns 1 if disc is good
 // returns 0 if disc is bad
 // returns -1 if failed
-signed char verifyDisc(const char* _filename){
-	FILE* fp = fopen(_filename,"rb");
-	if (!fp){
-		return -1;
-	}
+signed char verifyDisc(void* _out, char _type){
 	char buff[MAXVERIFYHASHBUFF];
 	signed char _ret;
 	uLong _curHash = crc32(0L, Z_NULL, 0);
 	size_t _packetSize;
 	signed char _packetType=0; // if 0 then regular new packet. if -1 then partial length new packet. if > 0 then it's an old packet and the number is the number of length bytes.
 	while(1){
-		switch(lowReadPacketHeader(fp,&_packetType,&_packetSize,&_curHash)){
+		switch(lowReadPacketHeader(_out,_type,&_packetType,&_packetSize,&_curHash)){
 			case -2:
 				fprintf(stderr,"actual data content error\n");
 			case -1:
@@ -625,7 +614,7 @@ signed char verifyDisc(const char* _filename){
 					}else{
 						_numRead=MAXVERIFYHASHBUFF;
 					}
-					if (fread(buff,1,_numRead,fp)!=_numRead){
+					if (iomodeRead(_out,_type,buff,_numRead)!=_numRead){
 						fprintf(stderr,"verifydisc packet content read error\n");
 						goto earlyend;
 					}
@@ -640,7 +629,7 @@ signed char verifyDisc(const char* _filename){
 				// check for METADATAMAGIC
 				int _magicLen=strlen(METADATAMAGIC);
 				char _readMagic[_magicLen];
-				if (fread(_readMagic,1,_magicLen,fp)!=_magicLen){
+				if (iomodeRead(_out,_type,_readMagic,_magicLen)!=_magicLen){
 					goto earlyend;
 				}
 				if (memcmp(_readMagic,METADATAMAGIC,_magicLen)!=0){
@@ -649,7 +638,7 @@ signed char verifyDisc(const char* _filename){
 				}
 				// read the hash
 				uint32_t _readHash;
-				if (read32(fp,&_readHash)){
+				if (read32(_out,_type,&_readHash)){
 					goto earlyend;
 				}
 				_ret=(_readHash==((uint32_t)_curHash));
@@ -662,10 +651,17 @@ signed char verifyDisc(const char* _filename){
 earlyend:
 	_ret=-1;
 cleanup:
-	if (fclose(fp)==EOF){
-		perror("verifyDisc");
+	if (iomodeClose(_out,_type)){
+		perror("verifyDisc close");
 	}
 	return _ret;
+}
+signed char verifyDiscFile(const char* _filename){
+	FILE* fp = fopen(_filename,"rb");
+	if (!fp){
+		return -1;
+	}
+	return verifyDisc(fp,IOMODE_FILE);
 }
 
 // note that _fromHere and _bigList are both already sorted from biggest to smallest
@@ -777,14 +773,15 @@ int main(int argc, char** args){
 		// Open a new disc
 		//////////////////////////////
 		sprintf(_lastTestFile,"/tmp/arcout%d",__testfilenameNum++);
-		_myInfo.testout = fopen(_lastTestFile,"wb");
+		_myInfo.iomode=IOMODE_FILE;
+		_myInfo.out=fopen(_lastTestFile,"wb");
 		
 		///////////////////////////////////
 		// get filenames. this depends on free space on current disc
 		///////////////////////////////////
 		size_t _numChosenFiles;
 		//1000000000
-		if (getGoodFileList(1000000,_newFileList,_newListLen,&(_compressInfo->fileList),&_numChosenFiles)){
+		if (getGoodFileList(1000000000,_newFileList,_newListLen,&(_compressInfo->fileList),&_numChosenFiles)){
 			fprintf(stderr,"getGoodFileList failed\n");
 			goto cleanup;
 		}
@@ -802,14 +799,14 @@ int main(int argc, char** args){
 			goto cleanup;
 		}
 		// write the rest of the file
-		if (fputc(0,_myInfo.testout)==EOF){
+		if (iomodePutc(_myInfo.out,_myInfo.iomode,0)==-2){
 			perror("post write error 1");
 			goto cleanup;
 		}
-		if (fwrite(METADATAMAGIC,1,strlen(METADATAMAGIC),_myInfo.testout)!=strlen(METADATAMAGIC) ||
-			write32(_myInfo.testout,_myInfo.curHash)==-2 ||
-			write64(_myInfo.testout,_myInfo.hInfo.curUsed)==-2 ||
-			fwrite(_myInfo.hInfo.data,1,_myInfo.hInfo.curUsed,_myInfo.testout)!=_myInfo.hInfo.curUsed){
+		if (iomodeWriteFail(_myInfo.out,_myInfo.iomode,METADATAMAGIC,strlen(METADATAMAGIC))==-2 ||
+			write32(_myInfo.out,_myInfo.iomode,_myInfo.curHash)==-2 ||
+			write64(_myInfo.out,_myInfo.iomode,_myInfo.hInfo.curUsed)==-2 ||
+			iomodeWriteFail(_myInfo.out,_myInfo.iomode,_myInfo.hInfo.data,_myInfo.hInfo.curUsed)==-2){
 
 			perror("post write error 2");
 			goto cleanup;
@@ -818,14 +815,16 @@ int main(int argc, char** args){
 		///////////////////////////////////
 		// finish disc write
 		///////////////////////////////////
-		if (fclose(_myInfo.testout)==EOF){
-			perror("finish write");
+		if (iomodeClose(_myInfo.out,_myInfo.iomode)){
+			perror("finish write - close");
 		}
-	
 		///////////////////////////////////
 		// verify disc
 		///////////////////////////////////
-		signed char _doUpdateSeen=verifyDisc(_lastTestFile);
+		// TODO - eject disc and then put drive back in. this can all be done with code.
+		_myInfo.iomode=IOMODE_FILE;
+		_myInfo.out=fopen(_lastTestFile,"rb");
+		signed char _doUpdateSeen=verifyDisc(_myInfo.out,_myInfo.iomode); // closes the disc IO
 		if (_doUpdateSeen!=1){ // if it's bad
 			if (forwardUntil("mybodyisready")){
 				goto cleanup;
@@ -875,6 +874,14 @@ int main(int argc, char** args){
 			}
 			free(_compressInfo->fileList);
 			_newFilesLeft-=_numChosenFiles;
+		}
+
+		if (forwardUntil("mybodyisready")){
+			goto cleanup;
+		}
+		fprintf(stderr,"burn another disc? (y/n)\n");
+		if (getYesNoIn()!=1){
+			break;
 		}
 	}while(_newFilesLeft!=0);
 	///////////////////////////////////
