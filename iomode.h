@@ -11,3 +11,9 @@ signed char iomodeClose(void* _out, char _type);
 size_t iomodeRead(void* _out ,char _type, void* _dest, size_t nmemb);
 // works like fgetc
 int iomodeGetc(void* _out, char _type);
+///
+signed char write16(void* _out, char _type, uint16_t n);
+signed char write32(void* _out, char _type, uint32_t n);
+signed char write64(void* _out, char _type, uint64_t n);
+///
+signed char read32(void* _out, char _type, uint32_t* n);
