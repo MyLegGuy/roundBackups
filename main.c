@@ -477,7 +477,7 @@ void shoveBackInBigList(struct newFile** _fromHere, size_t _fromHereSize, struct
 	size_t _fromFilesPut=0;
 	size_t _lastFreeSlot;
 	for (i=0;i<_maxBigList;++i){
-		if (!_bigList[i]){
+		if (_bigList[i]){
 			if (_bigList[i]->size<_fromHere[_fromFilesPut]->size){ // if the next file we'll put should go before this one
 				_bigList[_lastFreeSlot]=_fromHere[_fromFilesPut];
 				if (++_fromFilesPut==_fromHereSize){
