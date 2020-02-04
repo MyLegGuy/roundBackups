@@ -59,7 +59,6 @@ struct fileCallInfo{
 	struct newFile** fileList;
 	char* rootDir; // ends in a slash. chop everything off the filename past this. 
 };
-
 //////////////////
 // returns 1 on fail
 char runProgram(char* const _args[]){
@@ -343,7 +342,8 @@ signed char iomodeSwitch(void* _out, char _type){
 	switch(_type){
 		case IOMODE_DISC:
 			// eject the tray. use whatever the user puts in.
-			break;
+			forwardUntil("mynewdiscisready");
+			return 0;
 		case IOMODE_FILE:
 			sprintf(_lastTestFile,"/tmp/arcout%d",_lastOutputFileNum++);
 			return 0;
@@ -351,23 +351,18 @@ signed char iomodeSwitch(void* _out, char _type){
 	return -2;
 }
 // returns -2 if failed
+// for discs, this shoves in the drive handle
 signed char iomodeOpen(void** _outOut, char _requestedType, char _isWrite){
 	switch(_requestedType){
 		case IOMODE_DISC:
-			break;
+		{
+			struct iomodeDisc* d=*_outOut;
+			d->driveList=openDrive("/dev/sr0");
+			return d->driveList==NULL ? -2 : 0;
+		}
 		case IOMODE_FILE:
 			*_outOut = fopen(_lastTestFile,_isWrite ? "wb" : "rb");
 			return (*_outOut==NULL) ? -2 : 0;
-	}
-	return -2;
-}
-signed char iomodeGetFree(void* _src, char _type, size_t* _retSize){
-	switch(_type){
-		case IOMODE_DISC:
-			break;
-		case IOMODE_FILE:
-			*_retSize=1000000000;
-			return 0;
 	}
 	return -2;
 }
@@ -557,7 +552,10 @@ void shoveBackInBigList(struct newFile** _fromHere, size_t _fromHereSize, struct
 #define MYTESTFOLDER "/tmp/testfolder/"
 #define TESTLASTSEEN "/tmp/lastseen"
 int main(int argc, char** args){
-	char _userChosenMode=IOMODE_FILE;
+	printf("%d\n",verifyDisc(fopen("/tmp/data2","rb"),IOMODE_FILE));
+	return 0;
+	
+	char _userChosenMode=IOMODE_DISC;
 	///////////////////////////////////
 	// init get filenames
 	///////////////////////////////////
@@ -622,20 +620,25 @@ int main(int argc, char** args){
 	////////////////////////////////////
 	switch(_userChosenMode){
 		case IOMODE_DISC:
-			// TODO - disc init
+			if (initDiscLib()){
+				fprintf(stderr,"drive init and grabbing failed\n");
+				goto cleanup;
+			}
 			break;
 		case IOMODE_FILE:
 			break;
 	}
+	//////////////////////////////////
+	// more once only code
+	/////////////////////////////////
+	_myInfo.iomode=_userChosenMode;
+	if (iomodeInit(&_myInfo.out,_myInfo.iomode)){
+		goto cleanup;
+	}
 
-	///////////////////////////////////
-	///////////////////////////////////
 	///////////////////////////////////
 	// LOOP STARTS HERE
 	///////////////////////////////////
-	///////////////////////////////////
-	///////////////////////////////////
-	_myInfo.iomode=_userChosenMode;
 	do{
 		// reset state info
 		initInfo(&_myInfo);
@@ -650,17 +653,19 @@ int main(int argc, char** args){
 			fprintf(stderr,"iomodeOpen failed\n");
 			goto cleanup;
 		}
+		char _didFail=0; // if this is 1 then exit after drive release
 		size_t _freeDiscSpace;
 		if (iomodeGetFree(_myInfo.out,_myInfo.iomode,&_freeDiscSpace)){
 			fprintf(stderr,"iomodeGetFree failed\n");
-			goto cleanup;
+			{_didFail=1; goto cleanReleaseFail;}
 		}
+		printf("%ld is the bytes free\n",_freeDiscSpace);
 		// warn if disc doesnt have enough free
 		if (_freeDiscSpace<MINDISCSPACE){
 			forwardUntil("mybodyisready");
 			fprintf(stderr,"this disc size is below the minimum size (%ld). continue?\n",_freeDiscSpace);
 			if (getYesNoIn()!=1){
-				goto cleanup;
+				{_didFail=1; goto cleanReleaseFail;}
 			}
 		}
 		
@@ -670,25 +675,29 @@ int main(int argc, char** args){
 		size_t _numChosenFiles;
 		if (getGoodFileList(_freeDiscSpace,_newFileList,_newListLen,&(_compressInfo->fileList),&_numChosenFiles)){
 			fprintf(stderr,"getGoodFileList failed\n");
-			goto cleanup;
+			{_didFail=1; goto cleanReleaseFail;}
 		}
 		// realloc the state to the new number of files
 		if (initCompressState(_myCompress,_numChosenFiles)==-2){
 			fprintf(stderr,"error in initCompressState for %ld new files\n",_numChosenFiles);
-			goto cleanup;
+			{_didFail=1; goto cleanReleaseFail;}
 		}
 		///////////////////////////////////
 		// Do the assemble, encrypt, write
 		///////////////////////////////////
+		if (iomodePrepareWrite(_myInfo.out, _myInfo.iomode)){
+			fprintf(stderr,"iomodePrepareWrite failed\n");
+			{_didFail=1; goto cleanReleaseFail;}
+		}
 		_myInfo.assembleState=_myCompress;
 		if(gpgme_op_encrypt(_myContext,NULL, GPGME_ENCRYPT_NO_COMPRESS | GPGME_ENCRYPT_SYMMETRIC,_myIn,_myOut)!=GPG_ERR_NO_ERROR){
 			fprintf(stderr,"gpgme_op_encrypt error\n");
-			goto cleanup;
+			{_didFail=1; goto cleanReleaseFail;}
 		}
 		// write the rest of the file
 		if (iomodePutc(_myInfo.out,_myInfo.iomode,0)==-2){
 			perror("post write error 1");
-			goto cleanup;
+			{_didFail=1; goto cleanReleaseFail;}
 		}
 		if (iomodeWriteFail(_myInfo.out,_myInfo.iomode,METADATAMAGIC,strlen(METADATAMAGIC))==-2 ||
 			write32(_myInfo.out,_myInfo.iomode,_myInfo.curHash)==-2 ||
@@ -696,15 +705,28 @@ int main(int argc, char** args){
 			iomodeWriteFail(_myInfo.out,_myInfo.iomode,_myInfo.hInfo.data,_myInfo.hInfo.curUsed)==-2){
 
 			perror("post write error 2");
-			goto cleanup;
+			{_didFail=1; goto cleanReleaseFail;}
 		}
 
 		///////////////////////////////////
 		// finish disc write
 		///////////////////////////////////
+	cleanReleaseFail:
 		if (iomodeClose(_myInfo.out,_myInfo.iomode)){
-			perror("finish write - close");
+			fprintf(stderr,"error: finish write - close");
+			goto cleanup;
 		}
+		if (_didFail){
+			fprintf(stderr,"failure\n");
+			goto cleanup;
+		}
+
+
+
+
+		// TEMP
+		break;
+		
 		///////////////////////////////////
 		// verify disc
 		///////////////////////////////////
@@ -788,11 +810,7 @@ int main(int argc, char** args){
 		}
 	}while(1);
 	///////////////////////////////////
-	///////////////////////////////////
-	///////////////////////////////////
 	// LOOP ENDS HERE
-	///////////////////////////////////
-	///////////////////////////////////
 	///////////////////////////////////
 	
 
@@ -803,5 +821,7 @@ int main(int argc, char** args){
 	
 cleanup:
 	gpgme_release(_myContext);
-	// TODO - drive cleanup
+	if (_userChosenMode==IOMODE_DISC){
+		deinitDiscLib();
+	}
 }

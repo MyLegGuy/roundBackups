@@ -117,6 +117,7 @@ signed char verifyDisc(void* _out, char _type){
 			case -1:
 				goto earlyend;
 			case 0:
+				printf("reading %ld\n",_packetSize);
 				// read the rest and hash
 				while(1){
 					size_t _numRead;

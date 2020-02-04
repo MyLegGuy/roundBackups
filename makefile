@@ -1,7 +1,7 @@
 src = $(wildcard *.c) $(wildcard ./borrowed/*.c)
 obj = $(src:.c=.o)
 
-LDFLAGS = -lgpgme -lz -lwoarc
+LDFLAGS = -lgpgme -lz -lwoarc -lburn
 CFLAGS = -g -Wall -Wno-pointer-sign
 OUTNAME = a.out
 
