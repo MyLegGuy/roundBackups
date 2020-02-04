@@ -1,6 +1,6 @@
-Format of the disc image:
+cd not supported. support could easily be added with a few more libburn api calls but anybody using cd is a maniac.
 
-#define TOPBACKUPBYTES 100
+Format of the disc image:
 
 <gpg encrypted worried archive>
 <0x00> (this can be recognized because no pgp tag header can start without bit 7 set or with tag id 0.)

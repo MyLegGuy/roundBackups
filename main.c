@@ -14,6 +14,7 @@
 #include <gpgme.h>
 #include <zlib.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <endian.h>
 
 #include "config.h"
@@ -60,6 +61,28 @@ struct fileCallInfo{
 };
 
 //////////////////
+// returns 1 on fail
+char runProgram(char* const _args[]){
+	pid_t _newProcess = fork();
+	if (_newProcess==-1){
+		return 1;
+	}else if (_newProcess==0){ // 0 is returned to the new process
+		// First arg is the path of the file again
+		execv(_args[0],_args); // This will do this program and then end the child process
+		exit(1); // This means execv failed
+	}
+	int _retStatus;
+	waitpid(_newProcess,&_retStatus,0);
+	return !WIFEXITED(_retStatus);
+}
+char ejectRealDrive(){
+	char* const _args[2]={EJECTPATH,NULL};
+	return runProgram(_args);
+}
+char closeRealDrive(){
+	char* const _args[3]={EJECTPATH,"-t",NULL};
+	return runProgram(_args);
+}
 // returns 1 if line is empty
 char removeNewline(char* _toRemove){
 	int _cachedStrlen = strlen(_toRemove);
@@ -313,6 +336,42 @@ void failIfError(gpgme_error_t e, const char* _preMessage){
 	}
 }
 //////////////
+static int _lastOutputFileNum=0;
+static char _lastTestFile[255];
+// switch the current disc or maybe the current file
+signed char iomodeSwitch(void* _out, char _type){
+	switch(_type){
+		case IOMODE_DISC:
+			// eject the tray. use whatever the user puts in.
+			break;
+		case IOMODE_FILE:
+			sprintf(_lastTestFile,"/tmp/arcout%d",_lastOutputFileNum++);
+			return 0;
+	}
+	return -2;
+}
+// returns -2 if failed
+signed char iomodeOpen(void** _outOut, char _requestedType, char _isWrite){
+	switch(_requestedType){
+		case IOMODE_DISC:
+			break;
+		case IOMODE_FILE:
+			*_outOut = fopen(_lastTestFile,_isWrite ? "wb" : "rb");
+			return (*_outOut==NULL) ? -2 : 0;
+	}
+	return -2;
+}
+signed char iomodeGetFree(void* _src, char _type, size_t* _retSize){
+	switch(_type){
+		case IOMODE_DISC:
+			break;
+		case IOMODE_FILE:
+			*_retSize=1000000000;
+			return 0;
+	}
+	return -2;
+}
+//////////////
 /* gpgme_error_t myGetPassword(void *hook, const char *uid_hint, const char *passphrase_info, int prev_was_bad, int fd){ */
 /* 	printf("called b\n"); */
 /* 	char* pass = "aaa\n"; */
@@ -495,10 +554,10 @@ void shoveBackInBigList(struct newFile** _fromHere, size_t _fromHereSize, struct
 		_bigList[i]=_fromHere[_fromFilesPut];
 	}
 }
-
 #define MYTESTFOLDER "/tmp/testfolder/"
 #define TESTLASTSEEN "/tmp/lastseen"
 int main(int argc, char** args){
+	char _userChosenMode=IOMODE_FILE;
 	///////////////////////////////////
 	// init get filenames
 	///////////////////////////////////
@@ -561,7 +620,13 @@ int main(int argc, char** args){
 	// disc init
 	// from here on out, do not use exit(1)
 	////////////////////////////////////
-	// TODO - disc init
+	switch(_userChosenMode){
+		case IOMODE_DISC:
+			// TODO - disc init
+			break;
+		case IOMODE_FILE:
+			break;
+	}
 
 	///////////////////////////////////
 	///////////////////////////////////
@@ -570,24 +635,40 @@ int main(int argc, char** args){
 	///////////////////////////////////
 	///////////////////////////////////
 	///////////////////////////////////
-	char _lastTestFile[255];
-	int __testfilenameNum=0;	
+	_myInfo.iomode=_userChosenMode;
 	do{
 		// reset state info
 		initInfo(&_myInfo);
 		//////////////////////////////
 		// Open a new disc
 		//////////////////////////////
-		sprintf(_lastTestFile,"/tmp/arcout%d",__testfilenameNum++);
-		_myInfo.iomode=IOMODE_FILE;
-		_myInfo.out=fopen(_lastTestFile,"wb");
+		if (iomodeSwitch(_myInfo.out,_myInfo.iomode)){
+			fprintf(stderr,"iomodeSwitch failed\n");
+			goto cleanup;
+		}
+		if (iomodeOpen(&_myInfo.out,_myInfo.iomode,1)){
+			fprintf(stderr,"iomodeOpen failed\n");
+			goto cleanup;
+		}
+		size_t _freeDiscSpace;
+		if (iomodeGetFree(_myInfo.out,_myInfo.iomode,&_freeDiscSpace)){
+			fprintf(stderr,"iomodeGetFree failed\n");
+			goto cleanup;
+		}
+		// warn if disc doesnt have enough free
+		if (_freeDiscSpace<MINDISCSPACE){
+			forwardUntil("mybodyisready");
+			fprintf(stderr,"this disc size is below the minimum size (%ld). continue?\n",_freeDiscSpace);
+			if (getYesNoIn()!=1){
+				goto cleanup;
+			}
+		}
 		
 		///////////////////////////////////
 		// get filenames. this depends on free space on current disc
 		///////////////////////////////////
 		size_t _numChosenFiles;
-		//1000000000
-		if (getGoodFileList(1000000000,_newFileList,_newListLen,&(_compressInfo->fileList),&_numChosenFiles)){
+		if (getGoodFileList(_freeDiscSpace,_newFileList,_newListLen,&(_compressInfo->fileList),&_numChosenFiles)){
 			fprintf(stderr,"getGoodFileList failed\n");
 			goto cleanup;
 		}
@@ -627,9 +708,20 @@ int main(int argc, char** args){
 		///////////////////////////////////
 		// verify disc
 		///////////////////////////////////
-		// TODO - eject disc and then put drive back in. this can all be done with code.
-		_myInfo.iomode=IOMODE_FILE;
-		_myInfo.out=fopen(_lastTestFile,"rb");
+		// eject disc to flush cache
+		if (_myInfo.iomode==IOMODE_DISC){
+			if (ejectRealDrive()){
+				fprintf(stderr,"please open and close the drive\n");
+				// TODO - somehow wait
+			}else if (closeRealDrive()){
+				fprintf(stderr,"Please close your drive\n");
+				// TODO 
+			}
+		}
+		if (iomodeOpen(&_myInfo.out,_myInfo.iomode,0)){
+			fprintf(stderr,"iomodeOpen failed for verification\n");
+			goto cleanup;
+		}
 		signed char _doUpdateSeen=verifyDisc(_myInfo.out,_myInfo.iomode); // closes the disc IO
 		if (_doUpdateSeen!=1){ // if it's bad
 			if (forwardUntil("mybodyisready")){
