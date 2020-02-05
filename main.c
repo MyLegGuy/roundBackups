@@ -552,8 +552,10 @@ void shoveBackInBigList(struct newFile** _fromHere, size_t _fromHereSize, struct
 #define MYTESTFOLDER "/tmp/testfolder/"
 #define TESTLASTSEEN "/tmp/lastseen"
 int main(int argc, char** args){
-	printf("%d\n",verifyDisc(fopen("/tmp/data2","rb"),IOMODE_FILE));
-	return 0;
+	if (argc==2){
+		printf("%d\n",verifyDiscFile(args[1]));
+		return 0;
+	}
 	
 	char _userChosenMode=IOMODE_DISC;
 	///////////////////////////////////
@@ -721,10 +723,7 @@ int main(int argc, char** args){
 			goto cleanup;
 		}
 
-
-
-
-		// TEMP
+		// temp
 		break;
 		
 		///////////////////////////////////
@@ -734,17 +733,17 @@ int main(int argc, char** args){
 		if (_myInfo.iomode==IOMODE_DISC){
 			if (ejectRealDrive()){
 				fprintf(stderr,"please open and close the drive\n");
-				// TODO - somehow wait
+				forwardUntil("ididasyouasked");
 			}else if (closeRealDrive()){
 				fprintf(stderr,"Please close your drive\n");
-				// TODO 
+				forwardUntil("ididasyouasked");
 			}
 		}
 		if (iomodeOpen(&_myInfo.out,_myInfo.iomode,0)){
 			fprintf(stderr,"iomodeOpen failed for verification\n");
 			goto cleanup;
 		}
-		signed char _doUpdateSeen=verifyDisc(_myInfo.out,_myInfo.iomode); // closes the disc IO
+		signed char _doUpdateSeen=verifyDisc(_myInfo.out,_myInfo.iomode); // closes the disc IO too
 		if (_doUpdateSeen!=1){ // if it's bad
 			if (forwardUntil("mybodyisready")){
 				goto cleanup;
