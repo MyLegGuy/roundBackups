@@ -87,7 +87,7 @@ signed char iomodeWriteFail(void* _out, char _type, const void* buffer, size_t s
 signed char iomodePutc(void* _out, char _type, unsigned char _byte){
 	return iomodeWriteFail(_out,_type,&_byte,1);
 }
-static size_t disciomodeRead(struct discReadState* s, void* _dest, size_t nmemb){
+static size_t disciomodeRead(struct discReadState* s, char* _dest, size_t nmemb){
 	if (nmemb==0){
 		return 0;
 	}
@@ -96,26 +96,32 @@ static size_t disciomodeRead(struct discReadState* s, void* _dest, size_t nmemb)
 		while (s->buffPushed+nmemb>s->buffSize){
 			// push as much as possible
 			size_t _canPush = s->buffSize-s->buffPushed;
-			memcpy(_dest,s->buff,_canPush);
+			memcpy(_dest,s->buff+s->buffPushed,_canPush);
 			_dest+=_canPush;
 			nmemb-=_canPush;
 			_ret+=_canPush;
+			s->buffPushed=s->buffSize;
 			// read more data
 			if (s->curSector==s->maxSector){ // break because EOF
-				break;
+				return _ret;
+			}
+			int _numSectorsRead=DISCREADBUFFSEC;
+			if (s->curSector+_numSectorsRead>=s->maxSector){ // if we don't have enough sectors left to fill the buffer
+				_numSectorsRead=s->maxSector-s->curSector;
 			}
 			off_t _numRead;
-			if (burn_read_data(s->drive,s->curSector*SECTORSIZE,s->buff,DISCREADBUFFSIZE,&_numRead,1)<=0){
+			if (burn_read_data(s->drive,s->curSector*SECTORSIZE,s->buff,SECTORSIZE*_numSectorsRead,&_numRead,1)<=0){
 				fprintf(stderr,"disc read error\n");
 				return _ret;
 			}
-			s->curSector+=DISCREADBUFFSEC;
+			s->curSector+=_numSectorsRead;
 			s->buffSize=_numRead;
 			s->buffPushed=0;
 		}
 		memcpy(_dest,s->buff+s->buffPushed,nmemb);
+		_ret+=nmemb;
 		s->buffPushed+=nmemb;
-		return _ret+nmemb;
+		return _ret;
 	}else{
 		memcpy(_dest,s->buff+s->buffPushed,nmemb);
 		s->buffPushed+=nmemb;

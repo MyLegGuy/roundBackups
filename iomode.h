@@ -9,14 +9,13 @@ struct iomodeDisc{
 };
 #define SECTORSIZE 2048
 #define DISCREADBUFFSEC 4
-#define DISCREADBUFFSIZE (SECTORSIZE*DISCREADBUFFSEC)
 struct discReadState{
 	struct burn_drive* drive; // not freed, but is here to allow this to be the only arg to the functions
 	size_t curSector; // the next sector to read after we finish the buffer
 	size_t maxSector;
 	int buffPushed; // how much of the buffer has been used
 	int buffSize; // how much of the buffer is full right now
-	char buff[DISCREADBUFFSIZE];
+	char buff[SECTORSIZE*DISCREADBUFFSEC];
 };
 
 signed char iomodePrepareWrite(void* _out, char _type);

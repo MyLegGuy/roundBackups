@@ -584,7 +584,6 @@ int main(int argc, char** args){
 		printf("%d\n",verifyDiscFile(args[1]));
 		return 0;
 	}
-	
 	char _userChosenMode=IOMODE_DISC;
 	///////////////////////////////////
 	// init get filenames
