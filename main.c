@@ -664,15 +664,6 @@ int main(int argc, char** args){
 	if (iomodeInit(&_myInfo.out,_myInfo.iomode)){
 		goto cleanup;
 	}
-
-	/// TEST
-	if (iomodeOpen(&_myInfo.out,_myInfo.iomode,0)){
-		fprintf(stderr,"iomodeOpen failed for verification\n");
-		goto cleanup;
-	}
-	printf("%d\n",verifyDisc(_myInfo.out,_myInfo.iomode));
-	goto cleanup;
-
 	///////////////////////////////////
 	// LOOP STARTS HERE
 	///////////////////////////////////
@@ -705,7 +696,6 @@ int main(int argc, char** args){
 				{_didFail=1; goto cleanReleaseFail;}
 			}
 		}
-		
 		///////////////////////////////////
 		// get filenames. this depends on free space on current disc
 		///////////////////////////////////
@@ -757,10 +747,6 @@ int main(int argc, char** args){
 			fprintf(stderr,"failure\n");
 			goto cleanup;
 		}
-
-		// temp
-		break;
-		
 		///////////////////////////////////
 		// verify disc
 		///////////////////////////////////
@@ -846,13 +832,11 @@ int main(int argc, char** args){
 	///////////////////////////////////
 	// LOOP ENDS HERE
 	///////////////////////////////////
-	
 
 	///////////////////////////////////
 	// free nonsense just to supress valgrind errors
 	///////////////////////////////////
 	free(_newFileList);
-	
 cleanup:
 	gpgme_release(_myContext);
 	if (_userChosenMode==IOMODE_DISC){
