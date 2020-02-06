@@ -3,8 +3,20 @@
 
 #include "disc.h"
 struct iomodeDisc{
-	struct burnState s; // no padding is allowed before the first element of a struct. having this as the first element allows a pointer to this struct to be used as a pointer to struct burnState
+	void* state;
+	char isWrite;
 	struct burn_drive_info* driveList;
+};
+#define SECTORSIZE 2048
+#define DISCREADBUFFSEC 4
+#define DISCREADBUFFSIZE (SECTORSIZE*DISCREADBUFFSEC)
+struct discReadState{
+	struct burn_drive* drive; // not freed, but is here to allow this to be the only arg to the functions
+	size_t curSector; // the next sector to read after we finish the buffer
+	size_t maxSector;
+	int buffPushed; // how much of the buffer has been used
+	int buffSize; // how much of the buffer is full right now
+	char buff[DISCREADBUFFSIZE];
 };
 
 signed char iomodePrepareWrite(void* _out, char _type);

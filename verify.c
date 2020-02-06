@@ -152,7 +152,10 @@ signed char verifyDisc(void* _out, char _type){
 				if (read32(_out,_type,&_readHash)){
 					goto earlyend;
 				}
-				_ret=(_readHash==((uint32_t)_curHash));
+				if (!(_ret=(_readHash==((uint32_t)_curHash)))){
+					fprintf(stderr,"hash does not align\n");
+				}
+				fprintf(stderr,"%08X;%08X\n",_curHash,_readHash);
 				goto cleanup;
 			}
 				break;

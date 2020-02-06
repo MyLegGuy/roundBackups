@@ -17,6 +17,13 @@ depend:
 	makedepend -Y $(src)
 # DO NOT DELETE
 
-main.o: borrowed/goodLinkedList.h borrowed/filter.h main.h borrowed/bsdnftw.h
+userIn.o: main.h
+verify.o: roundFormat.h config.h iomode.h disc.h
+newFileGetter.o: config.h newFileGetter.h main.h borrowed/bsdnftw.h
+newFileGetter.o: borrowed/goodLinkedList.h borrowed/filter.h
+iomode.o: iomode.h disc.h
+disc.o: disc.h
+main.o: config.h verify.h iomode.h disc.h userIn.h borrowed/goodLinkedList.h
+main.o: borrowed/filter.h roundFormat.h main.h newFileGetter.h
 ./borrowed/goodLinkedList.o: ./borrowed/goodLinkedList.h
 ./borrowed/filter.o: ./borrowed/goodLinkedList.h ./main.h ./borrowed/filter.h

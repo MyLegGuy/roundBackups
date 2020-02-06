@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <unistd.h>
@@ -20,15 +21,18 @@ signed char iomodeClose(void* _out, char _type){
 		case IOMODE_DISC:
 		{
 			signed char _ret=0;
-			if (close(getWriteDescriptor(_out))){
-				fprintf(stderr,"failed to close the writing pipe. thats a big problem because it's the only way to signal the burning to stop, lol.\n");
-				_ret=-2;
+			struct iomodeDisc* d = _out;
+			if (d->isWrite){
+				if (close(getWriteDescriptor(d->state))){
+					fprintf(stderr,"failed to close the writing pipe. thats a big problem because it's the only way to signal the burning to stop, lol.\n");
+					_ret=-2;
+				}
+				if (completeAndFreeBurn(d->state)){
+					fprintf(stderr,"waitBurnComplete failed\n");
+					_ret=-2;
+				}
 			}
-			if (completeAndFreeBurn(_out)){
-				fprintf(stderr,"waitBurnComplete failed\n");
-				_ret=-2;
-			}
-			freeDrive(((struct iomodeDisc*)_out)->driveList);
+			freeDrive(d->driveList);
 			return _ret;
 		}
 		case IOMODE_FILE:
@@ -47,7 +51,7 @@ signed char iomodeInit(void** _outOut, char _requestedType){
 			return (*_outOut==NULL) ? -2 : 0;
 		}
 		case IOMODE_FILE:
-			return 0;			
+			return 0;
 	}
 	return -2;
 }
@@ -55,10 +59,13 @@ signed char iomodeInit(void** _outOut, char _requestedType){
 signed char iomodePrepareWrite(void* _out, char _type){
 	switch(_type){
 		case IOMODE_DISC:
-			if (discStartWrite(getDrive(((struct iomodeDisc*)_out)->driveList),1, _out)){
+		{
+			struct iomodeDisc* d = _out;
+			if (discStartWrite(getDrive(d->driveList),1, d->state)){
 				return -2;
 			}
 			return 0;
+		}
 	}
 	return 0;
 }
@@ -67,7 +74,7 @@ signed char iomodePrepareWrite(void* _out, char _type){
 ssize_t iomodeWrite(void* _out, char _type, const void* buffer, size_t size){
 	switch(_type){
 		case IOMODE_DISC:
-			return write(getWriteDescriptor(_out),buffer,size);
+			return write(getWriteDescriptor(((struct iomodeDisc*)_out)->state),buffer,size);
 		case IOMODE_FILE:
 			return fwrite(buffer,1,size,_out);
 	}
@@ -80,12 +87,45 @@ signed char iomodeWriteFail(void* _out, char _type, const void* buffer, size_t s
 signed char iomodePutc(void* _out, char _type, unsigned char _byte){
 	return iomodeWriteFail(_out,_type,&_byte,1);
 }
+static size_t disciomodeRead(struct discReadState* s, void* _dest, size_t nmemb){
+	if (nmemb==0){
+		return 0;
+	}
+	if (s->buffPushed+nmemb>s->buffSize){
+		size_t _ret=0;
+		while (s->buffPushed+nmemb>s->buffSize){
+			// push as much as possible
+			size_t _canPush = s->buffSize-s->buffPushed;
+			memcpy(_dest,s->buff,_canPush);
+			_dest+=_canPush;
+			nmemb-=_canPush;
+			_ret+=_canPush;
+			// read more data
+			if (s->curSector==s->maxSector){ // break because EOF
+				break;
+			}
+			off_t _numRead;
+			if (burn_read_data(s->drive,s->curSector*SECTORSIZE,s->buff,DISCREADBUFFSIZE,&_numRead,1)<=0){
+				fprintf(stderr,"disc read error\n");
+				return _ret;
+			}
+			s->curSector+=DISCREADBUFFSEC;
+			s->buffSize=_numRead;
+			s->buffPushed=0;
+		}
+		memcpy(_dest,s->buff+s->buffPushed,nmemb);
+		s->buffPushed+=nmemb;
+		return _ret+nmemb;
+	}else{
+		memcpy(_dest,s->buff+s->buffPushed,nmemb);
+		s->buffPushed+=nmemb;
+		return nmemb;
+	}
+}
 size_t iomodeRead(void* _out, char _type, void* _dest, size_t nmemb){
 	switch(_type){
 		case IOMODE_DISC:
-			fprintf(stderr,"disc read body not ready yet\n");
-			// TODO
-			break;
+			return disciomodeRead(((struct iomodeDisc*)_out)->state,_dest,nmemb);
 		case IOMODE_FILE:
 			return fread(_dest,1,nmemb,_out);
 	}

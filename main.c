@@ -358,7 +358,35 @@ signed char iomodeOpen(void** _outOut, char _requestedType, char _isWrite){
 		{
 			struct iomodeDisc* d=*_outOut;
 			d->driveList=openDrive("/dev/sr0");
-			return d->driveList==NULL ? -2 : 0;
+			d->isWrite = _isWrite;
+			if (_isWrite){
+				d->state = malloc(sizeof(struct burnState));
+			}else{
+				int* _dataTrackPos;
+				int _numTracks;
+				if (getDataTrackPositions(getDrive(d->driveList), &_dataTrackPos, &_numTracks)){
+					fprintf(stderr,"getDataTrackPos failed\n");
+					return -2;
+				}
+				if (_numTracks<=0){
+					fprintf(stderr,"no tracks on disc\n");
+					return -2;
+				}
+				struct discReadState* dr = malloc(sizeof(struct discReadState));
+				if (!dr){
+					fprintf(stderr,"state malloc failed\n");
+					return -2;
+				}
+				d->state = dr;
+				dr->drive=getDrive(d->driveList);
+				dr->curSector = _dataTrackPos[(_numTracks-1)*2]; // last sector start
+				dr->maxSector = _dataTrackPos[(_numTracks-1)*2+1]; // last sector end
+				dr->buffPushed=SECTORSIZE;
+				dr->buffSize=0;
+				dr->buffPushed=0;
+				free(_dataTrackPos);
+			}
+			return (d->driveList==NULL || d->state==NULL) ? -2 : 0;
 		}
 		case IOMODE_FILE:
 			*_outOut = fopen(_lastTestFile,_isWrite ? "wb" : "rb");
@@ -637,6 +665,14 @@ int main(int argc, char** args){
 	if (iomodeInit(&_myInfo.out,_myInfo.iomode)){
 		goto cleanup;
 	}
+
+	/// TEST
+	if (iomodeOpen(&_myInfo.out,_myInfo.iomode,0)){
+		fprintf(stderr,"iomodeOpen failed for verification\n");
+		goto cleanup;
+	}
+	printf("%d\n",verifyDisc(_myInfo.out,_myInfo.iomode));
+	goto cleanup;
 
 	///////////////////////////////////
 	// LOOP STARTS HERE
