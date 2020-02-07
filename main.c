@@ -604,7 +604,7 @@ int main(int argc, char** args){
 	///////////////////////////////////
 	// init gpg
 	///////////////////////////////////
-	fprintf(stderr,"version: %s\n",gpgme_check_version(NULL));
+	printf("version: %s\n",gpgme_check_version(NULL));
 	failIfError(gpgme_engine_check_version(GPGME_PROTOCOL_OpenPGP),"openpgp engine check");
 	// init pass info
 	struct gpgInfo _myInfo;
@@ -687,11 +687,12 @@ int main(int argc, char** args){
 			fprintf(stderr,"iomodeGetFree failed\n");
 			{_didFail=1; goto cleanReleaseFail;}
 		}
-		printf("%ld is the bytes free\n",_freeDiscSpace);
+		printf("disc has %ld bytes free\n",_freeDiscSpace);
 		// warn if disc doesnt have enough free
 		if (_freeDiscSpace<MINDISCSPACE){
 			forwardUntil("mybodyisready");
-			fprintf(stderr,"this disc size is below the minimum size (%ld). continue?\n",_freeDiscSpace);
+			fprintf(stderr,"disc is very small.\n");
+			printf("this disc size is below the minimum size (%ld). continue?\n",_freeDiscSpace);
 			if (getYesNoIn()!=1){
 				{_didFail=1; goto cleanReleaseFail;}
 			}
@@ -753,10 +754,10 @@ int main(int argc, char** args){
 		// eject disc to flush cache
 		if (_myInfo.iomode==IOMODE_DISC){
 			if (ejectRealDrive()){
-				fprintf(stderr,"please open and close the drive\n");
+				printf("please open and close the drive\n");
 				forwardUntil("ididasyouasked");
 			}else if (closeRealDrive()){
-				fprintf(stderr,"Please close your drive\n");
+				printf("Please close your drive\n");
 				forwardUntil("ididasyouasked");
 			}
 		}
@@ -770,15 +771,17 @@ int main(int argc, char** args){
 				goto cleanup;
 			}
 			if (_doUpdateSeen==-1){
-				fprintf(stderr,"disc verification failed. ignore? (y/n)\n");
+				fprintf(stderr,"disc verification failed\n");
+				printf("disc verification failed. ignore? (y/n)\n");
 			}else{
-				fprintf(stderr,"disc corrupt. ignore? (y/n)\n");
+				fprintf(stderr,"disc corrupt.\n");
+				printf("disc corrupt. ignore? (y/n)\n");
 			}
 			signed char _doRetry = getYesNoIn();
 			if (_doRetry==-1){
 				goto cleanup;
 			}else if (_doRetry==1){ // yes, do ignore
-				fprintf(stderr,"Really ignore the problem? these files will not be rewritten.\n");
+				printf("Really ignore the problem? these files will not be rewritten.\n");
 				switch(getYesNoIn()){
 					case -1:
 						goto cleanup;
@@ -820,7 +823,7 @@ int main(int argc, char** args){
 			if (forwardUntil("mybodyisready")){
 				goto cleanup;
 			}
-			fprintf(stderr,"burn another disc? (y/n)\n");
+			printf("burn another disc? (y/n)\n");
 			if (getYesNoIn()!=1){
 				break;
 			}
