@@ -360,6 +360,13 @@ signed char iomodeOpen(void** _outOut, char _requestedType, char _isWrite){
 			d->driveList=openDrive("/dev/sr0");
 			d->isWrite = _isWrite;
 			if (_isWrite){
+				int _formatRet = libburner_formatBD(getDrive(d->driveList));
+				if (_formatRet==-1){
+					printf("Note - not a BD\n");
+				}else if (_formatRet!=1){
+					fprintf(stderr,"BD format err!\n");
+					return -2;
+				}
 				d->state = malloc(sizeof(struct burnState));
 			}else{
 				int* _dataTrackPos;

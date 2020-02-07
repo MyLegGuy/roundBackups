@@ -3,3 +3,5 @@
 #define MAXVERIFYHASHBUFF 1000 // 1k
 #define EJECTPATH "/usr/bin/eject"
 #define MINDISCSPACE 0
+
+#define PROGRESSUPDATETIME 5

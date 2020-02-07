@@ -23,6 +23,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include "config.h"
 #include "disc.h"
 /////////////////////////////////
 static int getlba(struct burn_toc_entry* entry){
@@ -119,70 +120,60 @@ signed char chunkToFile(struct burn_drive* drive, int _startSector, int _endSect
     Formats unformatted blank BD-R to hold a default amount of spare blocks
     for eventual mishaps during writing. If BD-R get written without being
     formatted, then they get no such reserve and will burn at full speed.
+
+	returns -1 if not a BD
+	returns 0 on fail. 1 on OK. 1 is returned also if the disc is already formatted
 */
-int libburner_format(struct burn_drive *drive)
-{
-	// TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO
-	// TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO
-	// TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO
-	// FORMAT IF IT'S AN EMPTY BD
-	// TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO
-	// TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO
-	// TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO TODO 
-	struct burn_progress p;
-	double percent = 1.0;
-	int ret, status, num_formats, format_flag= 0;
-	off_t size = 0;
-	unsigned dummy;
-	enum burn_disc_status disc_state;
-	int current_profile;	
+int libburner_formatBD(struct burn_drive *drive){
+	int current_profile;
 	char current_profile_name[80];
 	if (!burn_disc_get_profile(drive, &current_profile, current_profile_name)){
 		fprintf(stderr,"No profile info avalible\n");
-		// TODO - the original does not check if this fails. check the source code to see what this function really does
 		return 0;
 	}
+	int ret,format_flag= 0;
+	off_t size = 0;
 	if (current_profile == 0x13) {
-		fprintf(stderr, "IDLE: DVD-RW media is already formatted\n");
-		return 2;
+		//fprintf(stderr, "IDLE: DVD-RW media is already formatted\n");
+		return 1;
 	} else if (current_profile == 0x41 || current_profile == 0x43) {
-		disc_state = burn_disc_get_status(drive);
+		enum burn_disc_status disc_state = burn_disc_get_status(drive);
 		if (disc_state != BURN_DISC_BLANK && current_profile == 0x41) {
-			fprintf(stderr,
-				"FATAL: BD-R is not blank. Cannot format.\n");
-			return 0;
+			//fprintf(stderr,"FATAL: BD-R is not blank. Cannot format.\n");
+			return 1;
 		}
-		ret = burn_disc_get_formats(drive, &status, &size, &dummy,
-								&num_formats);
+		unsigned dummy;
+		int status;
+		int num_formats;
+		ret = burn_disc_get_formats(drive, &status, &size, &dummy, &num_formats);
 		if (ret > 0 && status != BURN_FORMAT_IS_UNFORMATTED) {
-			fprintf(stderr,
-				"IDLE: BD media is already formatted\n");
-			return 2;
+			//fprintf(stderr,"IDLE: BD media is already formatted\n");
+			return 1;
 		}
 		size = 0;           /* does not really matter */
 		format_flag = 3<<1; /* format to default size, no quick */
-	} else if (current_profile == 0x14) { /* sequential DVD-RW */
-		size = 128 * 1024 * 1024;
-		format_flag = 1; /* write initial 128 MiB */
 	} else {
-		fprintf(stderr, "FATAL: Can only format DVD-RW or BD\n");
-		return 0;
+		//fprintf(stderr, "FATAL: Can only format BD\n");
+		// can only format BD!
+		return -1;
 	}
 	burn_set_signal_handling("libburner : ", NULL, 0x30);
 
 	printf("Beginning to format media.\n");
 	burn_disc_format(drive, size, format_flag);
 
-	sleep(1);
+	// Display progress
+	struct burn_progress p;
+	double percent = 1.0;
 	while (burn_drive_get_status(drive, &p) != BURN_DRIVE_IDLE) {
 		if(p.sectors>0 && p.sector>=0) /* display 1 to 99 percent */
 			percent = 1.0 + ((double) p.sector+1.0)
 					 / ((double) p.sectors) * 98.0;
 		printf("Formatting  ( %.1f%% done )\n", percent);
-		sleep(1);
+		sleep(PROGRESSUPDATETIME);
 	}
 	if (burn_is_aborting(0) > 0)
-		return -1;
+		return 0;
 	burn_set_signal_handling("libburner : ", NULL, 0x0);
 	burn_disc_get_profile(drive, &current_profile,current_profile_name);
 	if (current_profile == 0x14 || current_profile == 0x13)
@@ -272,7 +263,7 @@ static signed char waitBurnComplete(struct burnState* _state){
 							  (double) size));
 		} 
 		printf("\n");
-		sleep(1);
+		sleep(PROGRESSUPDATETIME);
 	}
 	printf("\n");
 	return 0;

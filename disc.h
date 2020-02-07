@@ -18,3 +18,4 @@ struct burn_drive* getDrive(struct burn_drive_info* _info);
 void freeDrive(struct burn_drive_info* _info);
 void deinitDiscLib();
 size_t getDiscFreeSpace(struct burn_drive* d);
+int libburner_formatBD(struct burn_drive *drive);
