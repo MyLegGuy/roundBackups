@@ -165,7 +165,7 @@ earlyend:
 	_ret=-1;
 cleanup:
 	if (iomodeClose(_out,_type)){
-		perror("verifyDisc close");
+		fprintf(stderr,"verifyDisc close");
 	}
 	return _ret;
 }

@@ -336,28 +336,35 @@ void failIfError(gpgme_error_t e, const char* _preMessage){
 }
 //////////////
 static int _lastOutputFileNum=0;
-static char _lastTestFile[255];
+static int _lastTestFileRootLen=0;
+static char _lastTestFile[PATH_MAX]; // yes i know this is unsafe. no i dont care
 // switch the current disc or maybe the current file
-signed char iomodeSwitch(void* _out, char _type){
+signed char iomodeSwitch(void* _out, char _type, char** _filename){
 	switch(_type){
 		case IOMODE_DISC:
 			// eject the tray. use whatever the user puts in.
 			forwardUntil("mynewdiscisready");
 			return 0;
 		case IOMODE_FILE:
-			sprintf(_lastTestFile,"/tmp/arcout%d",_lastOutputFileNum++);
+			if (!_lastTestFile[0]){ // first run
+				_lastTestFileRootLen=strlen(*_filename);
+				strcpy(_lastTestFile,*_filename);
+				free(*_filename);
+				*_filename=_lastTestFile;
+			}
+			sprintf(&_lastTestFile[_lastTestFileRootLen],"%d",_lastOutputFileNum++);
 			return 0;
 	}
 	return -2;
 }
 // returns -2 if failed
 // for discs, this shoves in the drive handle
-signed char iomodeOpen(void** _outOut, char _requestedType, char _isWrite){
+signed char iomodeOpen(void** _outOut, char _requestedType, char _isWrite, char* _filename){
 	switch(_requestedType){
 		case IOMODE_DISC:
 		{
 			struct iomodeDisc* d=*_outOut;
-			d->driveList=openDrive("/dev/sr0");
+			d->driveList=openDrive(_filename);
 			d->isWrite = _isWrite;
 			if (_isWrite){
 				int _formatRet = libburner_formatBD(getDrive(d->driveList));
@@ -396,7 +403,7 @@ signed char iomodeOpen(void** _outOut, char _requestedType, char _isWrite){
 			return (d->driveList==NULL || d->state==NULL) ? -2 : 0;
 		}
 		case IOMODE_FILE:
-			*_outOut = fopen(_lastTestFile,_isWrite ? "wb" : "rb");
+			*_outOut = fopen(_filename,_isWrite ? "wb" : "rb");
 			return (*_outOut==NULL) ? -2 : 0;
 	}
 	return -2;
@@ -589,14 +596,22 @@ int main(int argc, char** args){
 		printf("%d\n",verifyDiscFile(args[1]));
 		return 0;
 	}
-	if (argc!=3){
-		printf("%s <root dir> <seen log filename>\n",args[0]);
+	if (argc!=6){
+		printf("%s <file/disc> <out filepath> <root dir> <seen log filename> <key fingerprint>\n",args[0]);
 		return 1;
 	}
-	char _userChosenMode=IOMODE_FILE;
-	char* _chosenRootDir=args[1];
-	char* _lastSeenFilename=args[2];
-	char* _userChosenFingerprint=NULL;
+	char _userChosenMode;
+	if (strcmp(args[1],"file")==0){
+		_userChosenMode=IOMODE_FILE;
+	}else if (strcmp(args[1],"disc")==0){
+		_userChosenMode=IOMODE_DISC;
+	}else{
+		return 1;
+	}
+	char* _curFilename=strdup(args[2]);
+	char* _chosenRootDir=args[3];
+	char* _lastSeenFilename=args[4];
+	char* _userChosenFingerprint=(strcmp(args[5],"null")==0 ? NULL : args[5]);
 	///////////////////////////////////
 	// init get filenames
 	///////////////////////////////////
@@ -649,7 +664,7 @@ int main(int argc, char** args){
 	///////////////////////////////////
 	gpgme_key_t keys[2]={NULL,NULL}; // must end in null
 	if (_userChosenFingerprint){
-		if (gpgme_get_key(_myContext,_userChosenFingerprint,&(keys[0]),0)==GPG_ERR_EOF){
+		if (gpgme_get_key(_myContext,_userChosenFingerprint,&(keys[0]),0)!=GPG_ERR_NO_ERROR || keys[0]==NULL){
 			fprintf(stderr,"key with fingerprint \"%s\" not found\n",_userChosenFingerprint);
 			exit(1);
 		}
@@ -695,11 +710,11 @@ int main(int argc, char** args){
 		//////////////////////////////
 		// Open a new disc
 		//////////////////////////////
-		if (iomodeSwitch(_myInfo.out,_myInfo.iomode)){
+		if (iomodeSwitch(_myInfo.out,_myInfo.iomode,&_curFilename)){
 			fprintf(stderr,"iomodeSwitch failed\n");
 			goto cleanup;
 		}
-		if (iomodeOpen(&_myInfo.out,_myInfo.iomode,1)){
+		if (iomodeOpen(&_myInfo.out,_myInfo.iomode,1,_curFilename)){
 			fprintf(stderr,"iomodeOpen failed\n");
 			goto cleanup;
 		}
@@ -750,7 +765,7 @@ int main(int argc, char** args){
 		}
 		// write the rest of the file
 		if (iomodePutc(_myInfo.out,_myInfo.iomode,0)==-2){
-			perror("post write error 1");
+			fprintf(stderr,"post write error 1");
 			{_didFail=1; goto cleanReleaseFail;}
 		}
 		if (iomodeWriteFail(_myInfo.out,_myInfo.iomode,METADATAMAGIC,strlen(METADATAMAGIC))==-2 ||
@@ -758,7 +773,7 @@ int main(int argc, char** args){
 			write64(_myInfo.out,_myInfo.iomode,_myInfo.hInfo.curUsed)==-2 ||
 			iomodeWriteFail(_myInfo.out,_myInfo.iomode,_myInfo.hInfo.data,_myInfo.hInfo.curUsed)==-2){
 
-			perror("post write error 2");
+			fprintf(stderr,"post write error 2");
 			{_didFail=1; goto cleanReleaseFail;}
 		}
 
@@ -787,7 +802,7 @@ int main(int argc, char** args){
 				forwardUntil("ididasyouasked");
 			}
 		}
-		if (iomodeOpen(&_myInfo.out,_myInfo.iomode,0)){
+		if (iomodeOpen(&_myInfo.out,_myInfo.iomode,0,_curFilename)){
 			fprintf(stderr,"iomodeOpen failed for verification\n");
 			goto cleanup;
 		}
