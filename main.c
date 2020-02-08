@@ -584,21 +584,26 @@ void shoveBackInBigList(struct newFile** _fromHere, size_t _fromHereSize, struct
 		_bigList[i]=_fromHere[_fromFilesPut];
 	}
 }
-#define MYTESTFOLDER "/tmp/testfolder/"
-#define TESTLASTSEEN "/tmp/lastseen"
 int main(int argc, char** args){
 	if (argc==2){
 		printf("%d\n",verifyDiscFile(args[1]));
 		return 0;
 	}
-	char _userChosenMode=IOMODE_DISC;
+	if (argc!=3){
+		printf("%s <root dir> <seen log filename>\n",args[0]);
+		return 1;
+	}
+	char _userChosenMode=IOMODE_FILE;
+	char* _chosenRootDir=args[1];
+	char* _lastSeenFilename=args[2];
+	char* _userChosenFingerprint=NULL;
 	///////////////////////////////////
 	// init get filenames
 	///////////////////////////////////
-	forceArgEndInSlash(MYTESTFOLDER);
+	forceArgEndInSlash(_chosenRootDir);
 	size_t _newListLen;
 	struct newFile** _newFileList;
-	getNewFiles(MYTESTFOLDER,/*"/tmp/inc"*/NULL,/*"/tmp/exc"*/NULL,TESTLASTSEEN,&_newListLen,&_newFileList);
+	getNewFiles(_chosenRootDir,/*"/tmp/inc"*/NULL,/*"/tmp/exc"*/NULL,_lastSeenFilename,&_newListLen,&_newFileList);
 	if (_newListLen==0){
 		fprintf(stderr,"no new files found\n");
 		return 1;
@@ -640,6 +645,16 @@ int main(int argc, char** args){
 	failIfError(gpgme_set_protocol(_myContext,GPGME_PROTOCOL_OpenPGP),"gpgme_set_protocol");
 	gpgme_set_offline(_myContext,1);
 	///////////////////////////////////
+	// get key
+	///////////////////////////////////
+	gpgme_key_t keys[2]={NULL,NULL}; // must end in null
+	if (_userChosenFingerprint){
+		if (gpgme_get_key(_myContext,_userChosenFingerprint,&(keys[0]),0)==GPG_ERR_EOF){
+			fprintf(stderr,"key with fingerprint \"%s\" not found\n",_userChosenFingerprint);
+			exit(1);
+		}
+	}
+	///////////////////////////////////
 	// partial compress state init
 	///////////////////////////////////
 	struct compressState* _myCompress = allocCompressStateWithCallback();
@@ -648,7 +663,7 @@ int main(int argc, char** args){
 		fprintf(stderr,"out of memory on alloc compress info\n");
 		goto cleanup;
 	}
-	_compressInfo->rootDir=MYTESTFOLDER;
+	_compressInfo->rootDir=_chosenRootDir;
 	getCallbacks(_myCompress)->userData=_compressInfo;
 	///////////////////////////////////
 	// disc init
@@ -725,7 +740,11 @@ int main(int argc, char** args){
 			{_didFail=1; goto cleanReleaseFail;}
 		}
 		_myInfo.assembleState=_myCompress;
-		if(gpgme_op_encrypt(_myContext,NULL, GPGME_ENCRYPT_NO_COMPRESS | GPGME_ENCRYPT_SYMMETRIC,_myIn,_myOut)!=GPG_ERR_NO_ERROR){
+		gpgme_encrypt_flags_t _flagList=GPGME_ENCRYPT_NO_COMPRESS;
+		if (!_userChosenFingerprint){
+			_flagList|=GPGME_ENCRYPT_SYMMETRIC;
+		}
+		if(gpgme_op_encrypt(_myContext,_userChosenFingerprint ? keys : NULL,_flagList,_myIn,_myOut)!=GPG_ERR_NO_ERROR){
 			fprintf(stderr,"gpgme_op_encrypt error\n");
 			{_didFail=1; goto cleanReleaseFail;}
 		}
@@ -812,7 +831,7 @@ int main(int argc, char** args){
 		///////////////////////////////////
 		if (_doUpdateSeen){
 			// rewrite the last seen file to reflect that we've written this new stuff
-			if (appendToLastSeenList(TESTLASTSEEN,_compressInfo->rootDir,_compressInfo->fileList,_numChosenFiles)){
+			if (appendToLastSeenList(_lastSeenFilename,_compressInfo->rootDir,_compressInfo->fileList,_numChosenFiles)){
 				goto cleanup;
 			}
 		}
@@ -835,7 +854,7 @@ int main(int argc, char** args){
 				break;
 			}
 		}else{
-			fprintf(stderr,"HAPPY END\n");
+			printf("HAPPY END\n");
 			break;
 		}
 	}while(1);
