@@ -1,13 +1,22 @@
+--------
+About
+--------
+write an encrypted worriedArchive to disc.
+will keep track of which files already written on other disc and only write the new ones. (optional)
+
 cd not supported. support could easily be added with a few more libburn api calls but anybody using cd is a maniac.
 
-Format of the disc image:
+to decrypt and extract a disc you've made using the worriedArchive goodextract.out program:
+	gpg -d /dev/sr0 | ./goodextract.out - ./destfolder
 
+--------
+Format of the disc image:
+--------
 <gpg encrypted worried archive>
 <0x00> (this can be recognized because no pgp tag header can start without bit 7 set or with tag id 0.)
 <uint32_t: crc32 of encrypted worried archive>
 uint64_t numPacketBackupData
 (numPacketBackupData) bytes of packet headers
-
 
 packet header backup:
 <packet header>
