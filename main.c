@@ -365,7 +365,7 @@ signed char iomodeOpen(void** _outOut, char _requestedType, char _isWrite, char*
 		{
 			struct iomodeDisc* d=*_outOut;
 			d->driveList=openDrive(_filename);
-			d->isWrite = _isWrite;
+			d->isWrite = !!_isWrite;
 			if (_isWrite){
 				int _formatRet = libburner_formatBD(getDrive(d->driveList));
 				if (_formatRet==-1){
@@ -428,6 +428,7 @@ signed char getFileSize(FILE* fp, size_t* ret){
 }
 signed char woarcInitSource(size_t i, struct fileMeta* infoDest, void** srcDest, void* _userData){
 	struct fileCallInfo* _passedInfo = _userData;
+	printf("open %s\n",_passedInfo->fileList[i]->filename);
 	if (!(*srcDest=fopen(_passedInfo->fileList[i]->filename,"rb"))){
 		perror("woarcInitSource");
 		return -2;
@@ -486,46 +487,6 @@ void forceArgEndInSlash(const char* _passedFolder){
 		fprintf(stderr,"expected string to end with %c: \"%s\"\n",SEPARATOR,_passedFolder);
 		exit(1);
 	}
-}
-// read file into array
-char readFileNoBlanks(const char* _file, size_t* _retSize, char*** _retArray){
-	*_retArray=NULL;
-	*_retSize=0;
-	FILE* fp = fopen(_file,"rb");
-	if (fp==NULL){
-		return 1;
-	}
-	char _ret=0;
-	size_t _curMaxArray=0;
-	size_t _curArrayElems=0;
-	size_t _lineSize=0;
-	char* _lastLine=NULL;
-	while (1){
-		errno=0;
-		if (getline(&_lastLine,&_lineSize,fp)==-1){
-			_ret=(errno!=0);
-			break;
-		}
-		if (removeNewline(_lastLine)){ // skip blank lines
-			continue;
-		}
-		if (_curArrayElems>=_curMaxArray){
-			_curMaxArray+=10;
-			if (!(*_retArray = realloc(*_retArray,sizeof(char*)*_curMaxArray))){
-				fprintf(stderr,"readFileNoBlanks alloc failed\n");
-				_ret=1;
-				goto cleanup;
-			}
-		}
-		(*_retArray)[_curArrayElems++]=strdup(_lastLine);
-	}
-cleanup:
-	free(_lastLine);
-	if (fclose(fp)==EOF){
-		return 1;
-	}
-	*_retSize=_curArrayElems;
-	return _ret;
 }
 void freeTinyRead(size_t _arrLength, char** _arr){
 	int i;
@@ -591,13 +552,16 @@ void shoveBackInBigList(struct newFile** _fromHere, size_t _fromHereSize, struct
 		_bigList[i]=_fromHere[_fromFilesPut];
 	}
 }
+char* usedOrNull(char* _passed){
+	return strcmp(_passed,"-")==0 ? NULL : _passed;
+}
 int main(int argc, char** args){
 	if (argc==2){
 		printf("%d\n",verifyDiscFile(args[1]));
 		return 0;
 	}
-	if (argc!=6){
-		printf("%s <file/disc> <out filepath> <root dir> <seen log filename> <key fingerprint>\n",args[0]);
+	if (argc!=8){
+		printf("%s <file/disc> <out filepath> <root dir> <seen log filename> <key fingerprint> <inc list file> <exc list file>\n",args[0]);
 		return 1;
 	}
 	char _userChosenMode;
@@ -611,23 +575,20 @@ int main(int argc, char** args){
 	char* _curFilename=strdup(args[2]);
 	char* _chosenRootDir=args[3];
 	char* _lastSeenFilename=args[4];
-	char* _userChosenFingerprint=(strcmp(args[5],"null")==0 ? NULL : args[5]);
+	char* _userChosenFingerprint=usedOrNull(args[5]);
 	///////////////////////////////////
 	// init get filenames
 	///////////////////////////////////
 	forceArgEndInSlash(_chosenRootDir);
 	size_t _newListLen;
 	struct newFile** _newFileList;
-	getNewFiles(_chosenRootDir,/*"/tmp/inc"*/NULL,/*"/tmp/exc"*/NULL,_lastSeenFilename,&_newListLen,&_newFileList);
+	uint64_t _curDiscNum;
+	getNewFiles(_chosenRootDir,usedOrNull(args[6]),usedOrNull(args[7]),_lastSeenFilename,&_newListLen,&_newFileList,&_curDiscNum);
 	if (_newListLen==0){
 		fprintf(stderr,"no new files found\n");
 		return 1;
 	}
 	size_t _newFilesLeft=_newListLen;
-	int i;
-	for (i=0;i<_newListLen;++i){
-		printf("%ld;%d;%s\n",_newFileList[i]->size,_newFileList[i]->type,_newFileList[i]->filename);
-	}
 	///////////////////////////////////
 	// init gpg
 	///////////////////////////////////
@@ -710,6 +671,8 @@ int main(int argc, char** args){
 		//////////////////////////////
 		// Open a new disc
 		//////////////////////////////
+		++_curDiscNum;
+		printf("please insert your disc. it will be Disc %ld\n",_curDiscNum);
 		if (iomodeSwitch(_myInfo.out,_myInfo.iomode,&_curFilename)){
 			fprintf(stderr,"iomodeSwitch failed\n");
 			goto cleanup;
@@ -725,15 +688,21 @@ int main(int argc, char** args){
 			{_didFail=1; goto cleanReleaseFail;}
 		}
 		printf("disc has %ld bytes free\n",_freeDiscSpace);
+		if (_freeDiscSpace<METADATARESERVEDSPACE){
+			fprintf(stderr,"disc free space (%ld) is less than METADATARESERVEDSPACE (%ld)\n",_freeDiscSpace,METADATARESERVEDSPACE);
+			{_didFail=1; goto cleanReleaseFail;}
+		}
 		// warn if disc doesnt have enough free
 		if (_freeDiscSpace<MINDISCSPACE){
 			forwardUntil("mybodyisready");
 			fprintf(stderr,"disc is very small.\n");
-			printf("this disc size is below the minimum size (%ld). continue?\n",_freeDiscSpace);
+			printf("this disc free space (%ld) is below the minimum size. continue?\n",_freeDiscSpace);
 			if (getYesNoIn()!=1){
 				{_didFail=1; goto cleanReleaseFail;}
 			}
 		}
+		// account for that extra metadata space
+		_freeDiscSpace-=METADATARESERVEDSPACE;
 		///////////////////////////////////
 		// get filenames. this depends on free space on current disc
 		///////////////////////////////////
@@ -764,16 +733,20 @@ int main(int argc, char** args){
 			{_didFail=1; goto cleanReleaseFail;}
 		}
 		// write the rest of the file
+		// write invalid packet tag id (0) to mark end of pgp
 		if (iomodePutc(_myInfo.out,_myInfo.iomode,0)==-2){
-			fprintf(stderr,"post write error 1");
+			fprintf(stderr,"post write error 1\n");
 			{_didFail=1; goto cleanReleaseFail;}
 		}
-		if (iomodeWriteFail(_myInfo.out,_myInfo.iomode,METADATAMAGIC,strlen(METADATAMAGIC))==-2 ||
-			write32(_myInfo.out,_myInfo.iomode,_myInfo.curHash)==-2 ||
-			write64(_myInfo.out,_myInfo.iomode,_myInfo.hInfo.curUsed)==-2 ||
+		// write metadata stuff
+		if (iomodeWriteFail(_myInfo.out,_myInfo.iomode,METADATAMAGIC,strlen(METADATAMAGIC))==-2 || // magic
+			iomodePutc(_myInfo.out,_myInfo.iomode,ROUNDVERSIONNUM)==-2 || // version
+			write64(_myInfo.out,_myInfo.iomode,_curDiscNum)==-2 || // disc number
+			write32(_myInfo.out,_myInfo.iomode,_myInfo.curHash)==-2 || // hash
+			write64(_myInfo.out,_myInfo.iomode,_myInfo.hInfo.curUsed)==-2 || // packet header backup
 			iomodeWriteFail(_myInfo.out,_myInfo.iomode,_myInfo.hInfo.data,_myInfo.hInfo.curUsed)==-2){
 
-			fprintf(stderr,"post write error 2");
+			fprintf(stderr,"post write error 2\n");
 			{_didFail=1; goto cleanReleaseFail;}
 		}
 
@@ -782,7 +755,7 @@ int main(int argc, char** args){
 		///////////////////////////////////
 	cleanReleaseFail:
 		if (iomodeClose(_myInfo.out,_myInfo.iomode)){
-			fprintf(stderr,"error: finish write - close");
+			fprintf(stderr,"error: finish write - close\n");
 			goto cleanup;
 		}
 		if (_didFail){
@@ -844,14 +817,16 @@ int main(int argc, char** args){
 		///////////////////////////////////
 		// finish up
 		///////////////////////////////////
+		printf("this is the end of Disc %ld\n",_curDiscNum);
 		if (_doUpdateSeen){
 			// rewrite the last seen file to reflect that we've written this new stuff
-			if (appendToLastSeenList(_lastSeenFilename,_compressInfo->rootDir,_compressInfo->fileList,_numChosenFiles)){
+			if (appendToLastSeenList(_lastSeenFilename,_compressInfo->rootDir,_compressInfo->fileList,_numChosenFiles,_curDiscNum)){
 				goto cleanup;
 			}
 		}
 		// our current list of files is done. free it.
 		if (_compressInfo->fileList){
+			size_t i;
 			for (i=0;i<_numChosenFiles;++i){
 				free(_compressInfo->fileList[i]->filename);
 				free(_compressInfo->fileList[i]);

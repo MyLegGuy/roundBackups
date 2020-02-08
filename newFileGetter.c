@@ -8,8 +8,10 @@
 #define _DEFAULT_SOURCE
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <ftw.h>
+#include <errno.h>
 #include "config.h"
 #include "newFileGetter.h"
 #include "main.h"
@@ -98,7 +100,6 @@ int checkSingleIsNew(const char *fpath, const struct stat *sb, int typeflag, str
 			if (!(_passedCheck->speedyAdder=speedyAddnList(_passedCheck->speedyAdder,_thisFile))){
 				return 1;
 			}
-			printf("Added %s\n",fpath);
 		}
 	}else{
 		if (typeflag==FTW_DNR){
@@ -111,11 +112,76 @@ int checkSingleIsNew(const char *fpath, const struct stat *sb, int typeflag, str
 	}
 	return 0;
 }
+// read file into array
+static char readLastSeenList(const char* _file, size_t* _retSize, char*** _retArray, uint64_t* _retMaxDisc){
+	*_retMaxDisc=0;
+	*_retArray=NULL;
+	*_retSize=0;
+	FILE* fp = fopen(_file,"rb");
+	if (fp==NULL){
+		return 1;
+	}
+	char _ret=0;
+	size_t _curMaxArray=0;
+	size_t _curArrayElems=0;
+	size_t _lineSize=0;
+	char* _lastLine=NULL;
+	while (1){
+		int _firstChar = fgetc(fp);
+		if (_firstChar==EOF){
+			_ret=!feof(fp);
+			break;
+		}
+		if (_firstChar==0){ // if the line starts with 0x00 then it's a disc ID line
+			uint64_t _disc;
+			if (fread(&_disc,1,sizeof(uint64_t),fp)!=sizeof(uint64_t)){
+				fprintf(stderr,"read error\n");
+				_ret=1;
+				break;
+			}
+			_disc=le64toh(_disc);
+			if (_disc>*_retMaxDisc){
+				*_retMaxDisc=_disc;
+			}
+			continue;
+		}else{
+			if (ungetc(_firstChar,fp)==EOF){
+				fprintf(stderr,"ungetc error\n");
+				_ret=1;
+				break;
+			}
+		}
+		errno=0;
+		if (getline(&_lastLine,&_lineSize,fp)==-1){
+			_ret=(errno!=0);
+			break;
+		}
+		if (removeNewline(_lastLine)){ // skip blank lines
+			continue;
+		}
+		if (_curArrayElems>=_curMaxArray){
+			_curMaxArray+=10;
+			if (!(*_retArray = realloc(*_retArray,sizeof(char*)*_curMaxArray))){
+				fprintf(stderr,"readFileNoBlanks alloc failed\n");
+				_ret=1;
+				goto cleanup;
+			}
+		}
+		(*_retArray)[_curArrayElems++]=strdup(_lastLine);
+	}
+cleanup:
+	free(_lastLine);
+	if (fclose(fp)==EOF){
+		return 1;
+	}
+	*_retSize=_curArrayElems;
+	return _ret;
+}
 // may exit(1)
-void getNewFiles(const char* _rootFolder, const char* _includeListFilename, const char* _excludeListFilename, const char* _seenListFilename, size_t* _retLen, struct newFile*** _retList){
+void getNewFiles(const char* _rootFolder, const char* _includeListFilename, const char* _excludeListFilename, const char* _seenListFilename, size_t* _retLen, struct newFile*** _retList, uint64_t* _maxDiscNum){
 	struct nList* _linkedList=NULL;
 	struct checkNewInfo _checkInfo;
-	if (readFileNoBlanks(_seenListFilename,&_checkInfo.seenListSize,&_checkInfo.seenList)){
+	if (readLastSeenList(_seenListFilename,&_checkInfo.seenListSize,&_checkInfo.seenList,_maxDiscNum)){
 		fprintf(stderr,"error reading %s\n",_seenListFilename);
 		exit(1);
 	}
@@ -148,30 +214,39 @@ void getNewFiles(const char* _rootFolder, const char* _includeListFilename, cons
 	// sort the array by size with biggest first
 	qsort(*_retList,*_retLen,sizeof(struct newFile*),newFileSizeCompare);
 }
-signed char appendToLastSeenList(const char* _lastSeenFilename, const char* _rootDir, struct newFile** _fileInfo, size_t _numFiles){
+signed char appendToLastSeenList(const char* _lastSeenFilename, const char* _rootDir, struct newFile** _fileInfo, size_t _numFiles, uint64_t _discNum){
 	FILE* fp = fopen(_lastSeenFilename,"ab");
 	if (!fp){
-		perror("appendToLastSeenList");
+		perror("appendToLastSeenList a");
 		return -2;
 	}
+	// write the disc number
+	if (fputc(0,fp)==EOF){
+		goto err;
+	}
+	_discNum=htole64(_discNum);
+	if (fwrite(&_discNum,1,sizeof(uint64_t),fp)!=sizeof(uint64_t)){
+		goto err;
+	}
+	//
 	size_t _cachedRootLen = strlen(_rootDir);
 	size_t i;
 	for (i=0;i<_numFiles;++i){
-		if (fputc('\n',fp)==EOF){
-			goto err;
-		}
 		const char* _writeStr = _fileInfo[i]->filename+_cachedRootLen;
 		if (fwrite(_writeStr,1,strlen(_writeStr),fp)!=strlen(_writeStr)){
 			goto err;
 		}
+		if (fputc('\n',fp)==EOF){
+			goto err;
+		}
 	}
 	if (fclose(fp)==EOF){
-		perror("appendToLastSeenList");
+		perror("appendToLastSeenList b");
 		return -2;
 	}
 	return 0;
 err:
-	perror("appendToLastSeenList");
+	perror("appendToLastSeenList c");
 	fclose(fp);
 	return -2;
 }

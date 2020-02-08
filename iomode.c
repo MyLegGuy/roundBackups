@@ -22,7 +22,7 @@ signed char iomodeClose(void* _out, char _type){
 		{
 			signed char _ret=0;
 			struct iomodeDisc* d = _out;
-			if (d->isWrite){
+			if (d->isWrite==2){ // if writing has started already
 				if (close(getWriteDescriptor(d->state))){
 					fprintf(stderr,"failed to close the writing pipe. thats a big problem because it's the only way to signal the burning to stop, lol.\n");
 					_ret=-2;
@@ -61,6 +61,7 @@ signed char iomodePrepareWrite(void* _out, char _type){
 		case IOMODE_DISC:
 		{
 			struct iomodeDisc* d = _out;
+			d->isWrite=2; // mark that writing has started
 			if (discStartWrite(getDrive(d->driveList),1, d->state)){
 				return -2;
 			}
@@ -163,5 +164,12 @@ signed char read32(void* _out, char _type, uint32_t* n){
 		return -2;
 	}
 	*n=le32toh(*n);
+	return 0;
+}
+signed char read64(void* _out, char _type, uint64_t* n){
+	if (iomodeRead(_out,_type,n,sizeof(uint64_t))!=sizeof(uint64_t)){
+		return -2;
+	}
+	*n=le64toh(*n);
 	return 0;
 }

@@ -10,10 +10,13 @@ to decrypt and extract a disc you've made using the worriedArchive goodextract.o
 	gpg -d /dev/sr0 | ./goodextract.out - ./destfolder
 
 --------
-Format of the disc image:
+Format of the disc image v1:
 --------
 <gpg encrypted worried archive>
 <0x00> (this can be recognized because no pgp tag header can start without bit 7 set or with tag id 0.)
+"ROUNDEND" (ASCII)
+<uint8_t roundArchiveVersion> (this is defined in roundFormat.h and is currently (02/08/20) 0x01.)
+<uint64_t discNumber>
 <uint32_t: crc32 of encrypted worried archive>
 uint64_t numPacketBackupData
 (numPacketBackupData) bytes of packet headers

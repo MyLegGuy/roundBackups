@@ -105,6 +105,7 @@ signed char lowReadPacketHeader(void* _out, char _type, signed char* _packetType
 // returns 0 if disc is bad
 // returns -1 if failed
 signed char verifyDisc(void* _out, char _type){
+	printf("verifying...\n");
 	char buff[MAXVERIFYHASHBUFF];
 	signed char _ret;
 	uLong _curHash = crc32(0L, Z_NULL, 0);
@@ -145,6 +146,16 @@ signed char verifyDisc(void* _out, char _type){
 				}
 				if (memcmp(_readMagic,METADATAMAGIC,_magicLen)!=0){
 					fprintf(stderr,"%s magic corrupt\n",METADATAMAGIC);
+					{_ret=0; goto cleanup;}
+				}
+				// read the version number
+				if (iomodeGetc(_out,_type)!=ROUNDVERSIONNUM){
+					fprintf(stderr,"bad version number\n");
+					{_ret=0; goto cleanup;}
+				}
+				// read the disc number
+				uint64_t _discNumber;
+				if (read64(_out,_type,&_discNumber)){
 					goto earlyend;
 				}
 				// read the hash
