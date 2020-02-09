@@ -4,7 +4,6 @@
 	This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 	You should have received a copy of the GNU General Public License along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
-// note: https://www.gnu.org/software/libc/manual/html_node/Cleanups-on-Exit.html
 // TODO - check permissions at the start for all passed files
 #include <stdlib.h>
 #include <stdint.h>
@@ -448,8 +447,9 @@ signed char getGoodFileList(size_t _maxSize, struct newFile** _allFileList, cons
 	for (i=0;i<_allFileListLen;++i){
 		if (_allFileList[i] && _allFileList[i]->size<=_curSize){ // fast check
 			size_t _actualUsedSize = _allFileList[i]->size+GPGEXTRAMETADATAOVERHEAD(_allFileList[i]->size)+WOARCSINGLEFILEBASEOVERHEAD+WOARCFILENAMEMETADATASPACE(strlen(_allFileList[i]->filename)-_cachedRootStrlen); // full check
-			if (_allFileList[i]->size<=_actualUsedSize){
-				_curSize-=_allFileList[i]->size;
+			if (_actualUsedSize<=_curSize){
+				_curSize-=_actualUsedSize;
+				printf("added %ld\n",_actualUsedSize);
 				if (!(_adder=speedyAddnList(_adder, _allFileList[i]))){
 					return -2;
 				}
@@ -458,6 +458,7 @@ signed char getGoodFileList(size_t _maxSize, struct newFile** _allFileList, cons
 			}
 		}
 	}
+	printf("we have %ld space leftover!\n",_curSize);
 	endSpeedyAddnList(_adder);
 	if (*_destSize==0){
 		fprintf(stderr,"todo - partial file code\n");
@@ -651,6 +652,7 @@ int main(int argc, char** args){
 			// account for that extra metadata space in the variable itself
 			_freeDiscSpace-=_minReservedMetadataSpace;
 		}
+		printf("definelty do not use more than %ld\n",_freeDiscSpace);
 		///////////////////////////////////
 		// get filenames. this depends on free space on current disc
 		///////////////////////////////////

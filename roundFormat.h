@@ -1,6 +1,9 @@
 #define METADATAMAGIC "ROUNDEND"
 #define ROUNDVERSIONNUM 1
 
+// AES will always round to multiple of this
+#define COMPRESSIONBLOCKSIZE 16
+
 // the maximum number of session key packets that can be copied for the sessionKeyPacketBackup
 #define MAXSESSIONKEYPACKETSCOPIED 2
 // i've seen lengths of 268 and also around 240
@@ -14,7 +17,8 @@
 		8+														\
 		4+														\
 		8+														\
-		ASSUMEDSESSIONKEYPACKETLEN*MAXSESSIONKEYPACKETSCOPIED	\
+		ASSUMEDSESSIONKEYPACKETLEN*MAXSESSIONKEYPACKETSCOPIED+	\
+		COMPRESSIONBLOCKSIZE									\
 		)
 
 // on my system, the partial continue packets have this much data. therefor i assume this will be true on all systems.
