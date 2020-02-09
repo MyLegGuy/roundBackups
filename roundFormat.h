@@ -10,19 +10,21 @@
 // so just be safe
 #define ASSUMEDSESSIONKEYPACKETLEN 500
 //
-#define ROUNDMETADATABASEOVERHEAD (								\
-		1+														\
-		strlen(METADATAMAGIC)+									\
-		1+														\
-		8+														\
-		4+														\
-		8+														\
-		ASSUMEDSESSIONKEYPACKETLEN*MAXSESSIONKEYPACKETSCOPIED+	\
-		COMPRESSIONBLOCKSIZE									\
+#define ROUNDMETADATABASEOVERHEAD (										\
+		1+																\
+		strlen(METADATAMAGIC)+											\
+		1+																\
+		8+																\
+		4+																\
+		8+																\
+		ASSUMEDSESSIONKEYPACKETLEN*MAXSESSIONKEYPACKETSCOPIED+			\
+		COMPRESSIONBLOCKSIZE+											\
+		271+2+1+2+1+1+4+1+20 /* some gpg packet data. 527 is for 4096 key */ \
 		)
 
 // on my system, the partial continue packets have this much data. therefor i assume this will be true on all systems.
 #define PARTIALCONTINUE 8192
 // how much extra metadata is there if we add this many bytes to the pgp file?
 // this can be found by the number of partial length continue packet headers there are
-#define GPGEXTRAMETADATAOVERHEAD(byteCount) (((byteCount)/PARTIALCONTINUE+1))
+// also we double it for some reason
+#define GPGEXTRAMETADATAOVERHEAD(byteCount) (((byteCount)/PARTIALCONTINUE+1)*2)

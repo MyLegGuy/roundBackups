@@ -11,7 +11,8 @@ signed char iomodeGetFree(void* _src, char _type, size_t* _retSize){
 			*_retSize=getDiscFreeSpace(getDrive(((struct iomodeDisc*)_src)->driveList));
 			return 0;
 		case IOMODE_FILE:
-			*_retSize=100000000; //1000000000
+		case IOMODE_FAKE:
+			*_retSize=25025314816; //1000000000
 			return 0;
 	}
 	return -2;
@@ -37,6 +38,9 @@ signed char iomodeClose(void* _out, char _type){
 		}
 		case IOMODE_FILE:
 			return fclose(_out)==0 ? 0 : -2;
+		case IOMODE_FAKE:
+			fprintf(stderr,"%ld bytes written\n",*((size_t*)_out));
+			return 0;
 	}
 	return -2;
 }
@@ -52,6 +56,13 @@ signed char iomodeInit(void** _outOut, char _requestedType){
 		}
 		case IOMODE_FILE:
 			return 0;
+		case IOMODE_FAKE:
+		{
+			size_t* a = malloc(sizeof(size_t));
+			*a=0;
+			*_outOut=a;
+			return 0;
+		}
 	}
 	return -2;
 }
@@ -78,6 +89,9 @@ ssize_t iomodeWrite(void* _out, char _type, const void* buffer, size_t size){
 			return write(getWriteDescriptor(((struct iomodeDisc*)_out)->state),buffer,size);
 		case IOMODE_FILE:
 			return fwrite(buffer,1,size,_out);
+		case IOMODE_FAKE:
+			*((size_t*)_out)+=size;
+			return size;
 	}
 	return -1;
 }
@@ -135,6 +149,9 @@ size_t iomodeRead(void* _out, char _type, void* _dest, size_t nmemb){
 			return disciomodeRead(((struct iomodeDisc*)_out)->state,_dest,nmemb);
 		case IOMODE_FILE:
 			return fread(_dest,1,nmemb,_out);
+		case IOMODE_FAKE:
+			memset(_dest,0,nmemb);
+			return nmemb;
 	}
 	return 0;
 }

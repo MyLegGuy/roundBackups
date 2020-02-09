@@ -108,6 +108,10 @@ signed char verifyDisc(void* _out, char _type){
 	printf("verifying...\n");
 	char buff[MAXVERIFYHASHBUFF];
 	signed char _ret;
+	if (_type==IOMODE_FAKE){
+		_ret=1;
+		goto cleanup;
+	}
 	uLong _curHash = crc32(0L, Z_NULL, 0);
 	size_t _packetSize;
 	signed char _packetType=0; // if 0 then regular new packet. if -1 then partial length new packet. if > 0 then it's an old packet and the number is the number of length bytes.

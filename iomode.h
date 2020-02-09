@@ -1,5 +1,6 @@
 #define IOMODE_FILE 0
 #define IOMODE_DISC 1
+#define IOMODE_FAKE 2
 
 #include "disc.h"
 struct iomodeDisc{

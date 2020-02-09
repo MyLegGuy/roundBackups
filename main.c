@@ -294,6 +294,8 @@ signed char iomodeSwitch(void* _out, char _type, char** _filename){
 			}
 			sprintf(&_lastTestFile[_lastTestFileRootLen],"%d",_lastOutputFileNum++);
 			return 0;
+		case IOMODE_FAKE:
+			return 0;
 	}
 	return -2;
 }
@@ -345,6 +347,8 @@ signed char iomodeOpen(void** _outOut, char _requestedType, char _isWrite, char*
 		case IOMODE_FILE:
 			*_outOut = fopen(_filename,_isWrite ? "wb" : "rb");
 			return (*_outOut==NULL) ? -2 : 0;
+		case IOMODE_FAKE:
+			return 0;
 	}
 	return -2;
 }
@@ -446,10 +450,10 @@ signed char getGoodFileList(size_t _maxSize, struct newFile** _allFileList, cons
 	size_t i;
 	for (i=0;i<_allFileListLen;++i){
 		if (_allFileList[i] && _allFileList[i]->size<=_curSize){ // fast check
-			size_t _actualUsedSize = _allFileList[i]->size+GPGEXTRAMETADATAOVERHEAD(_allFileList[i]->size)+WOARCSINGLEFILEBASEOVERHEAD+WOARCFILENAMEMETADATASPACE(strlen(_allFileList[i]->filename)-_cachedRootStrlen); // full check
+			size_t _actualUsedSize = _allFileList[i]->size+WOARCSINGLEFILEBASEOVERHEAD+WOARCFILENAMEMETADATASPACE(strlen(_allFileList[i]->filename)-_cachedRootStrlen); // full check
+			_actualUsedSize+=GPGEXTRAMETADATAOVERHEAD(_actualUsedSize);
 			if (_actualUsedSize<=_curSize){
 				_curSize-=_actualUsedSize;
-				printf("added %ld\n",_actualUsedSize);
 				if (!(_adder=speedyAddnList(_adder, _allFileList[i]))){
 					return -2;
 				}
@@ -458,7 +462,6 @@ signed char getGoodFileList(size_t _maxSize, struct newFile** _allFileList, cons
 			}
 		}
 	}
-	printf("we have %ld space leftover!\n",_curSize);
 	endSpeedyAddnList(_adder);
 	if (*_destSize==0){
 		fprintf(stderr,"todo - partial file code\n");
@@ -507,7 +510,7 @@ int main(int argc, char** args){
 		return 0;
 	}
 	if (argc!=8){
-		printf("%s <file/disc> <out filepath> <root dir> <seen log filename> <key fingerprint> <inc list file> <exc list file>\n",args[0]);
+		printf("%s <file/disc/fake> <out filepath> <root dir> <seen log filename> <key fingerprint> <inc list file> <exc list file>\n",args[0]);
 		return 1;
 	}
 	char _userChosenMode;
@@ -515,6 +518,8 @@ int main(int argc, char** args){
 		_userChosenMode=IOMODE_FILE;
 	}else if (strcmp(args[1],"disc")==0){
 		_userChosenMode=IOMODE_DISC;
+	}else if (strcmp(args[1],"fake")==0){
+		_userChosenMode=IOMODE_FAKE;
 	}else{
 		return 1;
 	}
@@ -652,7 +657,6 @@ int main(int argc, char** args){
 			// account for that extra metadata space in the variable itself
 			_freeDiscSpace-=_minReservedMetadataSpace;
 		}
-		printf("definelty do not use more than %ld\n",_freeDiscSpace);
 		///////////////////////////////////
 		// get filenames. this depends on free space on current disc
 		///////////////////////////////////

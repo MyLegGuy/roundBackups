@@ -1,3 +1,12 @@
+---------------
+-- WARNING
+---------------
+This software works on my machine.
+to my knowledge, gpgme does not give me precise control over things like partial packet length sizes. also your key size can change the first packet's size.
+different gpg defaults can cause your system to output a bigger pgp file than mine would. possibly to big to fit on the disc, runining everything.
+be careful.
+constant numbers giving space reserved for metadata can be found in roundFormat.h and config.h.
+
 --------
 About
 --------
