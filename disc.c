@@ -265,7 +265,6 @@ static signed char waitBurnComplete(struct burnState* _state){
 		printf("\n");
 		sleep(PROGRESSUPDATETIME);
 	}
-	printf("\n");
 	return 0;
 }
 void zeroBurnState(struct burnState* _info){

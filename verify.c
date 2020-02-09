@@ -179,9 +179,6 @@ signed char verifyDisc(void* _out, char _type){
 earlyend:
 	_ret=-1;
 cleanup:
-	if (iomodeClose(_out,_type)){
-		fprintf(stderr,"verifyDisc close");
-	}
 	return _ret;
 }
 signed char verifyDiscFile(const char* _filename){
@@ -189,5 +186,7 @@ signed char verifyDiscFile(const char* _filename){
 	if (!fp){
 		return -1;
 	}
-	return verifyDisc(fp,IOMODE_FILE);
+	signed char _ret=verifyDisc(fp,IOMODE_FILE);
+	fclose(fp);
+	return _ret;
 }

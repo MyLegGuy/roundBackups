@@ -729,11 +729,24 @@ int main(int argc, char** args){
 				forwardUntil("ididasyouasked");
 			}
 		}
+		// reopen disc
 		if (iomodeOpen(&_myInfo.out,_myInfo.iomode,0,_curFilename)){
 			fprintf(stderr,"iomodeOpen failed for verification\n");
 			goto cleanup;
 		}
-		signed char _doUpdateSeen=verifyDisc(_myInfo.out,_myInfo.iomode); // closes the disc IO too
+		// print how much free space is left
+		size_t _newFreeSpace;
+		if (iomodeGetFree(_myInfo.out,_myInfo.iomode,&_newFreeSpace)){
+			fprintf(stderr,"failed to get amount of free space on disc\n");
+		}else{
+			printf("there are %ld (%ld mb) free bytes left\n",_newFreeSpace,_newFreeSpace/1000);
+		}
+		// verify
+		signed char _doUpdateSeen=verifyDisc(_myInfo.out,_myInfo.iomode);
+		if (iomodeClose(_myInfo.out,_myInfo.iomode)==-2){
+			fprintf(stderr,"iomode close\n");
+			goto cleanup;
+		}
 		if (_doUpdateSeen!=1){ // if it's bad
 			if (forwardUntil("mybodyisready")){
 				goto cleanup;
@@ -767,6 +780,8 @@ int main(int argc, char** args){
 				free(_compressInfo->fileList);
 				_compressInfo->fileList=NULL;
 			}
+		}else{
+			printf("disc is good\n");
 		}
 		///////////////////////////////////
 		// finish up
