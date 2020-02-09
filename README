@@ -9,6 +9,8 @@ cd not supported. support could easily be added with a few more libburn api call
 to decrypt and extract a disc you've made using the worriedArchive goodextract.out program:
 	gpg -d /dev/sr0 | ./goodextract.out - ./destfolder
 
+at the bottom of the file, there is a backup of all the session key packets found in the pgp file. this packet is required to decrypt a pgp file. if the start of the disc were to be corrupted, the session key and therefor the entire disk would be lost. this extra copy is to help prevent this.
+
 --------
 Format of the disc image v1:
 --------
@@ -18,16 +20,8 @@ Format of the disc image v1:
 <uint8_t roundArchiveVersion> (this is defined in roundFormat.h and is currently (02/08/20) 0x01.)
 <uint64_t discNumber>
 <uint32_t: crc32 of encrypted worried archive>
-uint64_t numPacketBackupData
-(numPacketBackupData) bytes of packet headers
+uint64_t sessionKeyPacketBackupLength
+(sessionKeyPacketBackupLength) bytes of sessionKeyPacketBackup
 
-packet header backup:
-<packet header>
-<a byte>
-   // if this byte is 0x01 then the packet's contents follow
-   // if this byte is 0x00 then then the packet's contents do not follow
-   // if this byte is >0x01 then read the next byte
-		// (note that this will only happen for partial length headers)
-		// the first byte and the second byte come together to form a BIG endian uint16_t with bit 7 (leftmost) of the first byte ignored.
-		// this number represents the number of packets in a row with this partial length.
-		// to get the big endian bits, do ((a & 0x7f) << 8) | b
+sessionKeyPacketBackup:
+this is a raw copy of all packets with tags 1 or 3 found in the pgp file. They are in the order they appear in the file. the packet data is all there, so you can figure out the length of the individual packets.

@@ -21,6 +21,7 @@
 #include "verify.h"
 #include "iomode.h"
 #include "userIn.h"
+#include <woarcFormatInfo.h>
 #include <woarcassemble.h>
 #include "borrowed/goodLinkedList.h"
 #include "borrowed/filter.h"
@@ -30,21 +31,16 @@
 
 #define TOPBACKUPBYTES 100
 struct headerBak{
-	/*
-	Format:
-	<packet header>
-	<0x00 or 0x01. if 0x01 then packet data is after this. otherwise another packet header is coming.>
-	*/
 	unsigned char* data;
 	uint64_t curUsed;
 	uint64_t size;
-	signed char isCompress; // 0 if impossible. 1 is true. -1 if can compress.
 
 	unsigned char numBuff[4]; // for 5 byte numbers
 	signed char headerProgress; // -1 if done. need to use like that because curLeft can be 0 after valid packet
 	signed char packetType; // if 0 then regular new packet. if -1 then partial length new packet. if > 0 then it's an old packet and the number is the number of length bytes.
 	uint64_t curLeft;
 	char saveThisContent;
+	int numPacketsSoFar;
 };
 struct gpgInfo{
 	struct headerBak hInfo;
@@ -150,7 +146,7 @@ top:
 					_gottenTag=((unsigned char)(_curByte<<2))>>2;
 					h->packetType=0;
 				}
-				h->saveThisContent=!(_gottenTag==18);
+				h->saveThisContent=(_gottenTag==1 || _gottenTag==3);
 			}
 				break;
 			case 1:
@@ -197,71 +193,13 @@ top:
 			h->headerProgress=-1;
 		}
 		if (h->headerProgress==-1){ // just finished, reset vars for next time
-			if (h->packetType==-1){ // if it's a partial length packet then try to compress
-			switchcompresstype:
-				switch(h->isCompress){
-					case -1:
-						if (_curByte==h->data[h->curUsed-2]){ // init the compress if it's the same byte
-							// add an additional byte for the second byte of the number
-							if (addToSave(h,buff,1)==-2){
-								return -2;
-							}
-							h->data[h->curUsed-2]=0x80; // set leftmost bit of first byte
-							h->data[h->curUsed-1]=2; // this is our second header in a row
-							h->isCompress=1;
-							break;
-						}else{
-							h->isCompress=0; // start a new potential compress
-							goto switchcompresstype;
-						}
-					case 0: // just add the byte and set it as potentially compressable
-					{
-						unsigned char _myZero = 0;
-						if (addToSave(h,buff,1)==-2 || addToSave(h,&_myZero,1)==-2){
-							return -2;
-						}
-						h->isCompress=-1;
-						break;
-					}
-					case 1: // continue the compress
-					{
-						if (_curByte==h->data[h->curUsed-3]){ // init the compress if it's the same byte
-							// convert from big endian
-							uint16_t _curCount = (((h->data[h->curUsed-2] & 0x7f) << 8) | h->data[h->curUsed-1]);
-							if (_curCount==32767){ // max reached. start a new compress if you want this.
-								h->isCompress=0;
-								goto switchcompresstype;
-							}
-							// increment it
-							++_curCount;
-							// write it again as big endian
-							_curCount = htobe16(_curCount);
-							h->data[h->curUsed-2] = ((unsigned char*)(&_curCount))[0] | 0x80;
-							h->data[h->curUsed-1] = ((unsigned char*)(&_curCount))[1];
-							break;
-						}else{
-							h->isCompress=0; // start a new potential compress
-							goto switchcompresstype;
-						}
-						
-					}
-				}
-				
-			}else{ // for a regular packet, just add the byte
-				h->isCompress=0;
-				if (addToSave(h,buff,1)==-2){
-					return -2;
-				}
-				// write the byte that tells if packet data follows
-				unsigned char _nextIsPacketData=h->saveThisContent;
-				if (addToSave(h,&_nextIsPacketData,1)==-2){
-					return -2;
-				}
+			if (h->saveThisContent && addToSave(h,buff,1)==-2){
+				return -2;
 			}
 			h->headerProgress=0;
 		}else{
 			// save the current packet header byte
-			if (addToSave(h,buff,1)==-2){
+			if (h->saveThisContent && addToSave(h,buff,1)==-2){
 				return -2;
 			}
 			h->headerProgress++;
@@ -278,7 +216,10 @@ top:
 			buff+=h->curLeft;
 			size-=h->curLeft;
 			h->curLeft=0;
-			goto top;
+			h->numPacketsSoFar++;
+			if (h->numPacketsSoFar<MAXSESSIONKEYPACKETSCOPIED){
+				goto top;
+			}
 		}else{
 			if (h->saveThisContent && addToSave(h,buff,size)==-2){
 				return -2;
@@ -290,7 +231,7 @@ top:
 }
 ssize_t myWrite(void *handle, const void *buffer, size_t size){
 	struct gpgInfo* _myInfo = handle;
-	if (processHeaderBak(&_myInfo->hInfo,buffer,size)==-2){
+	if (_myInfo->hInfo.numPacketsSoFar<MAXSESSIONKEYPACKETSCOPIED && processHeaderBak(&_myInfo->hInfo,buffer,size)==-2){
 		errno=EIO;
 		return -1;
 	}
@@ -320,8 +261,8 @@ void initHeaderBak(struct headerBak* h){
 	h->size=0;
 	h->curLeft=0;
 	h->headerProgress=0;
-	h->isCompress=0;
 	h->packetType=0;
+	h->numPacketsSoFar=0;
 }
 void initInfo(struct gpgInfo* i){
 	i->curHash=crc32(0L, Z_NULL, 0);
@@ -497,20 +438,24 @@ void freeTinyRead(size_t _arrLength, char** _arr){
 }
 
 // will remove things from _allFileList and put them into _destList
-signed char getGoodFileList(size_t _maxSize, struct newFile** _allFileList, size_t _allFileListLen, struct newFile*** _destList, size_t* _destSize){
+signed char getGoodFileList(size_t _maxSize, struct newFile** _allFileList, const char* _rootDir, size_t _allFileListLen, struct newFile*** _destList, size_t* _destSize){
 	struct nList* _myList=NULL;
 	struct nList** _adder = initSpeedyAddnList(&_myList);
 	*_destSize=0;
 	size_t _curSize=_maxSize;
+	int _cachedRootStrlen = strlen(_rootDir);
 	size_t i;
 	for (i=0;i<_allFileListLen;++i){
-		if (_allFileList[i] && _allFileList[i]->size<=_curSize){
-			_curSize-=_allFileList[i]->size;
-			if (!(_adder=speedyAddnList(_adder, _allFileList[i]))){
-				return -2;
+		if (_allFileList[i] && _allFileList[i]->size<=_curSize){ // fast check
+			size_t _actualUsedSize = _allFileList[i]->size+GPGEXTRAMETADATAOVERHEAD(_allFileList[i]->size)+WOARCSINGLEFILEBASEOVERHEAD+WOARCFILENAMEMETADATASPACE(strlen(_allFileList[i]->filename)-_cachedRootStrlen); // full check
+			if (_allFileList[i]->size<=_actualUsedSize){
+				_curSize-=_allFileList[i]->size;
+				if (!(_adder=speedyAddnList(_adder, _allFileList[i]))){
+					return -2;
+				}
+				++(*_destSize);
+				_allFileList[i]=NULL;
 			}
-			++(*_destSize);
-			_allFileList[i]=NULL;
 		}
 	}
 	endSpeedyAddnList(_adder);
@@ -688,26 +633,29 @@ int main(int argc, char** args){
 			{_didFail=1; goto cleanReleaseFail;}
 		}
 		printf("disc has %ld bytes free\n",_freeDiscSpace);
-		if (_freeDiscSpace<METADATARESERVEDSPACE){
-			fprintf(stderr,"disc free space (%ld) is less than METADATARESERVEDSPACE (%ld)\n",_freeDiscSpace,METADATARESERVEDSPACE);
-			{_didFail=1; goto cleanReleaseFail;}
-		}
-		// warn if disc doesnt have enough free
 		if (_freeDiscSpace<MINDISCSPACE){
 			forwardUntil("mybodyisready");
-			fprintf(stderr,"disc is very small.\n");
-			printf("this disc free space (%ld) is below the minimum size. continue?\n",_freeDiscSpace);
+			fprintf(stderr,"disc is small.\n");
+			printf("this disc free space (%ld) is below the minimum recommended size. continue? (y/n)\n",_freeDiscSpace);
 			if (getYesNoIn()!=1){
 				{_didFail=1; goto cleanReleaseFail;}
 			}
 		}
-		// account for that extra metadata space
-		_freeDiscSpace-=METADATARESERVEDSPACE;
+		// account for the base space used by worriedArchive, pgp, and roundBackups
+		{
+			size_t _minReservedMetadataSpace=ROUNDMETADATABASEOVERHEAD+WOARCBASEMETADATASPACE+COMFYMETADATARESERVED;
+			if (_freeDiscSpace<_minReservedMetadataSpace){
+				fprintf(stderr,"disc free space (%ld) is less than the minimum space required for metadata (%ld)\n",_freeDiscSpace,_minReservedMetadataSpace);
+				{_didFail=1; goto cleanReleaseFail;}
+			}
+			// account for that extra metadata space in the variable itself
+			_freeDiscSpace-=_minReservedMetadataSpace;
+		}
 		///////////////////////////////////
 		// get filenames. this depends on free space on current disc
 		///////////////////////////////////
 		size_t _numChosenFiles;
-		if (getGoodFileList(_freeDiscSpace,_newFileList,_newListLen,&(_compressInfo->fileList),&_numChosenFiles)){
+		if (getGoodFileList(_freeDiscSpace,_newFileList,_compressInfo->rootDir,_newListLen,&(_compressInfo->fileList),&_numChosenFiles)){
 			fprintf(stderr,"getGoodFileList failed\n");
 			{_didFail=1; goto cleanReleaseFail;}
 		}

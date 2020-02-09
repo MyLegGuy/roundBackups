@@ -11,7 +11,7 @@ signed char iomodeGetFree(void* _src, char _type, size_t* _retSize){
 			*_retSize=getDiscFreeSpace(getDrive(((struct iomodeDisc*)_src)->driveList));
 			return 0;
 		case IOMODE_FILE:
-			*_retSize=1000000000;
+			*_retSize=100000000; //1000000000
 			return 0;
 	}
 	return -2;
