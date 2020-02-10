@@ -1,12 +1,3 @@
----------------
--- WARNING
----------------
-This software works on my machine.
-to my knowledge, gpgme does not give me precise control over things like partial packet length sizes. also your key size can change the first packet's size.
-different gpg defaults can cause your system to output a bigger pgp file than mine would. possibly to big to fit on the disc, runining everything.
-be careful.
-constant numbers giving space reserved for metadata can be found in roundFormat.h and config.h.
-
 --------
 About
 --------
@@ -19,6 +10,15 @@ to decrypt and extract a disc you've made using the worriedArchive goodextract.o
 	gpg -d /dev/sr0 | ./goodextract.out - ./destfolder
 
 at the bottom of the file, there is a backup of all the session key packets found in the pgp file. this packet is required to decrypt a pgp file. if the start of the disc were to be corrupted, the session key and therefor the entire disk would be lost. this extra copy is to help prevent this.
+
+---------------
+-- WARNING
+---------------
+This software works on my machine.
+to my knowledge, gpgme does not give me precise control over things like partial packet length sizes. also your key size can change the first packet's size.
+different gpg defaults can cause your system to output a bigger pgp file than mine would. possibly too big to fit on the disc, runining everything.
+be careful.
+constant numbers giving space reserved for metadata can be found in roundFormat.h and config.h.
 
 --------
 Format of the disc image v1:

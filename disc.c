@@ -163,13 +163,8 @@ int libburner_formatBD(struct burn_drive *drive){
 	burn_disc_format(drive, size, format_flag);
 
 	// Display progress
-	struct burn_progress p;
-	double percent = 1.0;
-	while (burn_drive_get_status(drive, &p) != BURN_DRIVE_IDLE) {
-		if(p.sectors>0 && p.sector>=0) /* display 1 to 99 percent */
-			percent = 1.0 + ((double) p.sector+1.0)
-					 / ((double) p.sectors) * 98.0;
-		printf("Formatting  ( %.1f%% done )\n", percent);
+	while (burn_drive_get_status(drive, NULL) != BURN_DRIVE_IDLE) {
+		printf("Formatting...\n");
 		sleep(PROGRESSUPDATETIME);
 	}
 	if (burn_is_aborting(0) > 0)
