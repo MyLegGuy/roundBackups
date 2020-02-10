@@ -742,6 +742,7 @@ int main(int argc, char** args){
 			printf("there are %ld (%ld mb) free bytes left\n",_newFreeSpace,_newFreeSpace/1000);
 		}
 		// verify
+		printf("verifying...\n");
 		signed char _doUpdateSeen=verifyDisc(_myInfo.out,_myInfo.iomode);
 		if (iomodeClose(_myInfo.out,_myInfo.iomode)==-2){
 			fprintf(stderr,"iomode close\n");
