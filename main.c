@@ -755,7 +755,7 @@ int main(int argc, char** args){
 		if (iomodeGetFree(_myInfo.out,_myInfo.iomode,&_newFreeSpace)){
 			fprintf(stderr,"failed to get amount of free space on disc\n");
 		}else{
-			printf("there are %ld (%ld mb) free bytes left\n",_newFreeSpace,_newFreeSpace/1000);
+			printf("there are %ld (%ld mb) free bytes left\n",_newFreeSpace,_newFreeSpace/1000/1000);
 		}
 		// verify
 		printf("verifying...\n");
