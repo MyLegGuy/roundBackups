@@ -105,7 +105,6 @@ signed char lowReadPacketHeader(void* _out, char _type, signed char* _packetType
 // returns 0 if disc is bad
 // returns -1 if failed
 signed char verifyDisc(void* _out, char _type){
-	printf("verifying...\n");
 	char buff[MAXVERIFYHASHBUFF];
 	signed char _ret;
 	if (_type==IOMODE_FAKE){

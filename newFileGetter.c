@@ -93,9 +93,45 @@ int checkSingleIsNew(const char *fpath, const struct stat *sb, int typeflag, str
 		if (!seenListContains(&fpath[_cachedRootStrlen],_passedCheck->seenListSize,_passedCheck->seenList)){
 			struct newFile* _thisFile = malloc(sizeof(struct newFile));
 			_thisFile->filename=strdup(fpath);
-			_thisFile->size=sb->st_size;
-			if (!(_thisFile->type=((typeflag==FTW_F) ? NEWFILE_FILE : ((typeflag==FTW_SL || typeflag==FTW_SLN) ? NEWFILE_SYM : 0)))){
-				fprintf(stderr,"i must've registered a new type of valid file but forgot to change this line.\n");
+			if (!_thisFile->filename){
+				perror("checkSingleIsNew filename strdup");
+				return 1;
+			}
+			_thisFile->lastModified=sb->st_mtime;
+			if (typeflag==FTW_F){
+				_thisFile->type=NEWFILE_FILE;
+				_thisFile->size=sb->st_size;
+			}else if (typeflag==FTW_SL || typeflag==FTW_SLN){
+				_thisFile->type=NEWFILE_SYM;
+				_thisFile->symInfo=malloc(sizeof(struct newFileSym));
+				if (!_thisFile->symInfo){
+					perror("malloc syminfo in checkSingleIsNew");
+					return 1;
+				}
+				// get the symlink dest
+				char* _dest;
+				if (!(_dest=realpath(_thisFile->filename,NULL))){
+					perror("realpath in checkSingleIsNew");
+					return 1;
+				}
+				// if the root is the same, we can store it as a relative symlink
+				if (strncmp(_dest,_passedCheck->rootDir,_cachedRootStrlen)==0){
+					_thisFile->symInfo->isRelative=1;
+					_thisFile->symInfo->symDest=strdup(&_dest[_cachedRootStrlen]);
+				}else{ // otherwise store it as an absolute symlink
+					fprintf(stderr,"warning: link to file not in backup directory: %s\n",_dest);
+					_thisFile->symInfo->isRelative=0;
+					_thisFile->symInfo->symDest=strdup(_dest); // duplicate it anyway because the one returned by realpath is massive
+				}
+				if (!_thisFile->symInfo->symDest){
+					perror("checkSingleIsNew strdup");
+					return 1;
+				}
+				free(_dest);
+				_thisFile->symInfo->pushedBytes=0;
+				_thisFile->size=strlen(_thisFile->symInfo->symDest);
+			}else{ // impossible case
+				return 1;
 			}
 			if (!(_passedCheck->speedyAdder=speedyAddnList(_passedCheck->speedyAdder,_thisFile))){
 				return 1;
@@ -167,7 +203,11 @@ static char readLastSeenList(const char* _file, size_t* _retSize, char*** _retAr
 				goto cleanup;
 			}
 		}
-		(*_retArray)[_curArrayElems++]=strdup(_lastLine);
+		if (!((*_retArray)[_curArrayElems++]=strdup(_lastLine))){
+			perror("readLastSeenList strdup");
+			_ret=1;
+			goto cleanup;
+		}
 	}
 cleanup:
 	free(_lastLine);
@@ -249,4 +289,12 @@ err:
 	perror("appendToLastSeenList c");
 	fclose(fp);
 	return -2;
+}
+// does not free the pointer itself though
+void freeNewFile(struct newFile* f){
+	free(f->filename);
+	if (f->type==NEWFILE_SYM){
+		free(f->symInfo->symDest);
+		free(f->symInfo);
+	}
 }

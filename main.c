@@ -353,36 +353,11 @@ signed char iomodeOpen(void** _outOut, char _requestedType, char _isWrite, char*
 	return -2;
 }
 //////////////
-/* gpgme_error_t myGetPassword(void *hook, const char *uid_hint, const char *passphrase_info, int prev_was_bad, int fd){ */
-/* 	printf("called b\n"); */
-/* 	char* pass = "aaa\n"; */
-/* 	if (gpgme_io_writen(fd,pass,strlen(pass)+1)){ */
-/* 		return 1; // TODO - another error code */
-/* 	} */
-/* 	return GPG_ERR_NO_ERROR; */
-/* } */
-//////////////
-signed char getFileSize(FILE* fp, size_t* ret){
-	struct stat st;
-	if (fstat(fileno(fp),&st)){
-		return -2;
-	}
-	*ret=st.st_size;
-	return 0;
-}
-signed char woarcInitSource(size_t i, struct fileMeta* infoDest, void** srcDest, void* _userData){
-	struct fileCallInfo* _passedInfo = _userData;
-	printf("open %s\n",_passedInfo->fileList[i]->filename);
-	if (!(*srcDest=fopen(_passedInfo->fileList[i]->filename,"rb"))){
-		perror("woarcInitSource");
-		return -2;
-	}
-	infoDest->len=_passedInfo->fileList[i]->size;
-	infoDest->lastModified=0;
-	return 0;
-}
 signed char woarcCloseSource(size_t i, void* _closeThis, void* _userData){
-	return fclose(_closeThis)==0 ? 0 : -2;
+	if (((struct fileCallInfo*)_userData)->fileList[i]->type==NEWFILE_FILE){
+		return fclose(_closeThis)==0 ? 0 : -2;
+	}
+	return 0;
 }
 signed char woarcGetFilename(size_t i, char** dest, void* _userData){
 	struct fileCallInfo* _info = _userData;
@@ -405,9 +380,47 @@ signed char woarcReadData(void* src, char* dest, size_t requested, size_t* actua
 	}
 	return 0;
 }
+// shove the symlink dest into the buffer
+signed char woarcReadButItsNewFileSym(void* src, char* dest, size_t requested, size_t* actual){
+	struct newFileSym* s = src;
+	if (s->pushedBytes+requested<strlen(s->symDest)){ // if we're requesting less than is left
+		memcpy(dest,s->symDest+s->pushedBytes,requested);
+		s->pushedBytes+=requested;
+		*actual=requested;
+		return 0;
+	}else{ // if we're requested more than we have, fill up as much as possible
+		*actual=strlen(s->symDest)-s->pushedBytes;
+		memcpy(dest,s->symDest+s->pushedBytes,*actual);
+		return -1; // eof
+	}
+}
 signed char woarcGetFileProp(size_t i, uint8_t* _propDest, uint16_t* _propPropDest, void* _userData){
-	*_propDest=0;
-	*_propPropDest=0;
+	struct fileCallInfo* _passedInfo = _userData;
+	if (_passedInfo->fileList[i]->type==NEWFILE_FILE){
+		*_propDest=FILEPROP_NORMAL;
+		*_propPropDest=0;
+	}else if (_passedInfo->fileList[i]->type==NEWFILE_SYM){
+		*_propDest=FILEPROP_LINK;
+		*_propPropDest=!(_passedInfo->fileList[i]->symInfo->isRelative);
+	}
+	return 0;
+}
+signed char woarcInitSource(size_t i, struct fileMeta* infoDest, void** srcDest, struct userCallbacks* c, void* _userData){
+	struct fileCallInfo* _passedInfo = _userData;
+	printf("open %s\n",_passedInfo->fileList[i]->filename);
+	if (_passedInfo->fileList[i]->type==NEWFILE_FILE){
+		if (!(*srcDest=fopen(_passedInfo->fileList[i]->filename,"rb"))){
+			perror("woarcInitSource");
+			return -2;
+		}
+		c->getSourceData=woarcReadData;
+	}else if (_passedInfo->fileList[i]->type==NEWFILE_SYM){
+		*srcDest=_passedInfo->fileList[i]->symInfo;
+		_passedInfo->fileList[i]->symInfo->pushedBytes=0;
+		c->getSourceData=woarcReadButItsNewFileSym;
+	}
+	infoDest->len=_passedInfo->fileList[i]->size;
+	infoDest->lastModified=_passedInfo->fileList[i]->lastModified;
 	return 0;
 }
 //////////////
@@ -524,6 +537,9 @@ int main(int argc, char** args){
 		return 1;
 	}
 	char* _curFilename=strdup(args[2]);
+	if (!_curFilename){
+		return 1;
+	}
 	char* _chosenRootDir=args[3];
 	char* _lastSeenFilename=args[4];
 	char* _userChosenFingerprint=usedOrNull(args[5]);
@@ -798,7 +814,7 @@ int main(int argc, char** args){
 		if (_compressInfo->fileList){
 			size_t i;
 			for (i=0;i<_numChosenFiles;++i){
-				free(_compressInfo->fileList[i]->filename);
+				freeNewFile(_compressInfo->fileList[i]);
 				free(_compressInfo->fileList[i]);
 			}
 			free(_compressInfo->fileList);
