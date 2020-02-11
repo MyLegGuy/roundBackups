@@ -17,3 +17,6 @@
 // my 25 GB discs have dug 346944 bytes (347 kb) into this comfy padding before.
 // 5 MB
 #define COMFYMETADATARESERVED 5000000
+
+// 1 if the "eject" program is able to eject and retract the tray
+#define DISCEJECTANDRETRACTWORKS 1

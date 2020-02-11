@@ -279,11 +279,13 @@ static int _lastOutputFileNum=0;
 static int _lastTestFileRootLen=0;
 static char _lastTestFile[PATH_MAX]; // yes i know this is unsafe. no i dont care
 // switch the current disc or maybe the current file
-signed char iomodeSwitch(void* _out, char _type, char** _filename){
+signed char iomodeSwitch(void* _out, char _type, char** _filename, char _userInEnabled){
 	switch(_type){
 		case IOMODE_DISC:
-			// eject the tray. use whatever the user puts in.
-			forwardUntil("mynewdiscisready");
+			if (_userInEnabled){
+				// eject the tray. use whatever the user puts in.
+				forwardUntil("mynewdiscisready");
+			}
 			return 0;
 		case IOMODE_FILE:
 			if (!_lastTestFile[0]){ // first run
@@ -518,6 +520,7 @@ char* usedOrNull(char* _passed){
 	return strcmp(_passed,"-")==0 ? NULL : _passed;
 }
 int main(int argc, char** args){
+	char _userInEnabled=1; // 0 if no input from user allowed.
 	if (argc==2){
 		printf("%d\n",verifyDiscFile(args[1]));
 		return 0;
@@ -640,7 +643,7 @@ int main(int argc, char** args){
 		//////////////////////////////
 		++_curDiscNum;
 		printf("please insert your disc. it will be Disc %ld\n",_curDiscNum);
-		if (iomodeSwitch(_myInfo.out,_myInfo.iomode,&_curFilename)){
+		if (iomodeSwitch(_myInfo.out,_myInfo.iomode,&_curFilename,_userInEnabled)){
 			fprintf(stderr,"iomodeSwitch failed\n");
 			goto cleanup;
 		}
@@ -656,10 +659,12 @@ int main(int argc, char** args){
 		}
 		printf("disc has %ld bytes free\n",_freeDiscSpace);
 		if (_freeDiscSpace<MINDISCSPACE){
-			forwardUntil("mybodyisready");
-			fprintf(stderr,"disc is small.\n");
-			printf("this disc free space (%ld) is below the minimum recommended size. continue? (y/n)\n",_freeDiscSpace);
-			if (getYesNoIn()!=1){
+			if (_userInEnabled){
+				forwardUntil("mybodyisready");
+				fprintf(stderr,"disc is small.\n");
+				printf("this disc free space (%ld) is below the minimum recommended size. continue? (y/n)\n",_freeDiscSpace);
+			}
+			if (!_userInEnabled || getYesNoIn()!=1){
 				{_didFail=1; goto cleanReleaseFail;}
 			}
 		}
@@ -737,12 +742,14 @@ int main(int argc, char** args){
 		///////////////////////////////////
 		// eject disc to flush cache
 		if (_myInfo.iomode==IOMODE_DISC){
-			if (ejectRealDrive()){
-				printf("please open and close the drive\n");
-				forwardUntil("ididasyouasked");
-			}else if (closeRealDrive()){
-				printf("Please close your drive\n");
-				forwardUntil("ididasyouasked");
+			if (_userInEnabled || DISCEJECTANDRETRACTWORKS){
+				if (ejectRealDrive()){
+					printf("please open and close the drive\n");
+					forwardUntil("ididasyouasked");
+				}else if (closeRealDrive()){
+					printf("Please close your drive\n");
+					forwardUntil("ididasyouasked");
+				}
 			}
 		}
 		// reopen disc
@@ -765,20 +772,26 @@ int main(int argc, char** args){
 			goto cleanup;
 		}
 		if (_doUpdateSeen!=1){ // if it's bad
-			if (forwardUntil("mybodyisready")){
-				goto cleanup;
-			}
-			if (_doUpdateSeen==-1){
-				fprintf(stderr,"disc verification failed\n");
-				printf("disc verification failed. ignore? (y/n)\n");
+			signed char _doIgnore;
+			if (_userInEnabled){
+				if (forwardUntil("mybodyisready")){
+					goto cleanup;
+				}
+				if (_doUpdateSeen==-1){
+					fprintf(stderr,"disc verification failed\n");
+					printf("disc verification failed. ignore? (y/n)\n");
+				}else{
+					fprintf(stderr,"disc corrupt.\n");
+					printf("disc corrupt. ignore? (y/n)\n");
+				}
+				_doIgnore = getYesNoIn();
 			}else{
-				fprintf(stderr,"disc corrupt.\n");
-				printf("disc corrupt. ignore? (y/n)\n");
+				fprintf(stderr,"verification result: %s",_doUpdateSeen==0 ? "corrupt" : "failed");
+				_doIgnore=-1;
 			}
-			signed char _doRetry = getYesNoIn();
-			if (_doRetry==-1){
+			if (_doIgnore==-1){
 				goto cleanup;
-			}else if (_doRetry==1){ // yes, do ignore
+			}else if (_doIgnore==1){ // yes, do ignore
 				printf("Really ignore the problem? these files will not be rewritten.\n");
 				switch(getYesNoIn()){
 					case -1:
@@ -821,7 +834,8 @@ int main(int argc, char** args){
 			_newFilesLeft-=_numChosenFiles;
 		}
 
-		if (_newFilesLeft!=0){
+		printf("There are %ld new files left\n",_newFilesLeft);
+		if (_newFilesLeft!=0 && _userInEnabled){
 			if (forwardUntil("mybodyisready")){
 				goto cleanup;
 			}
