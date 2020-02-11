@@ -41,15 +41,12 @@ int newFileSizeCompare(const void* uncastp1, const void* uncastp2){
 	}
 	return 0;
 }
-// may want to replace this with binary search later
+// regular string comparison
+int stringPointerComparer(const void* p1, const void* p2){
+	return strcmp(*((char**)p1),*((char**)p2));
+}
 char seenListContains(const char* _checkFor, size_t _listSize, char** _list){
-	int i;
-	for (i=0;i<_listSize;++i){
-		if (strcmp(_checkFor,_list[i])==0){
-			return 1;
-		}
-	}
-	return 0;
+	return (bsearch(&_checkFor,_list,_listSize,sizeof(char*),stringPointerComparer)!=NULL);
 }
 int checkSingleIsNew(const char *fpath, const struct stat *sb, int typeflag, struct FTW* ftwbuf, void* _arg){
 	struct checkNewInfo* _passedCheck = _arg;
@@ -209,6 +206,8 @@ static char readLastSeenList(const char* _file, size_t* _retSize, char*** _retAr
 			goto cleanup;
 		}
 	}
+	// sort the list
+	qsort(*_retArray,_curArrayElems,sizeof(char*),stringPointerComparer);
 cleanup:
 	free(_lastLine);
 	if (fclose(fp)==EOF){
