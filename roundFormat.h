@@ -5,7 +5,7 @@
 	You should have received a copy of the GNU General Public License along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 #define METADATAMAGIC "ROUNDEND"
-#define ROUNDVERSIONNUM 1
+#define ROUNDVERSIONNUM 2
 
 // AES will always round to multiple of this
 #define COMPRESSIONBLOCKSIZE 16
@@ -20,6 +20,7 @@
 		1+																\
 		strlen(METADATAMAGIC)+											\
 		1+																\
+		2+																\
 		8+																\
 		4+																\
 		8+																\

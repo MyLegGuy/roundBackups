@@ -23,7 +23,7 @@ char forwardUntil(const char* _required){
 	char* _curLine=NULL;
 	size_t _curSize=0;
 	while(1){
-		printf("Please input \"%s\"\n",_required);
+		printf("\aPlease input \"%s\"\n",_required);
 		if (getline(&_curLine,&_curSize,stdin)==-1 && !feof(stdin)){
 			_ret=1;
 			break;

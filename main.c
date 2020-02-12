@@ -525,8 +525,8 @@ int main(int argc, char** args){
 		printf("%d\n",verifyDiscFile(args[1]));
 		return 0;
 	}
-	if (argc!=8){
-		printf("%s <file/disc/fake> <out filepath> <root dir> <seen log filename> <key fingerprint> <inc list file> <exc list file>\n",args[0]);
+	if (argc!=9){
+		printf("%s <file/disc/fake> <out filepath> <root dir> <seen log filename> <discSetNum> <key fingerprint> <inc list file> <exc list file>\n",args[0]);
 		return 1;
 	}
 	char _userChosenMode;
@@ -545,7 +545,25 @@ int main(int argc, char** args){
 	}
 	char* _chosenRootDir=args[3];
 	char* _lastSeenFilename=args[4];
-	char* _userChosenFingerprint=usedOrNull(args[5]);
+	char* _userChosenFingerprint=usedOrNull(args[6]);
+	uint16_t _setId;
+	// parse the set ID
+	{
+		if (args[5][0]=='.'){
+			fprintf(stderr,"decimals are friends, not numbers.\n");
+			return 1;
+		}
+		if (args[5][0]<'0' || args[5][0]>'9'){
+			fprintf(stderr,"disc set id must be a number\n");
+			return 1;
+		}
+		int _potentialValue = atoi(args[5]);
+		if (_potentialValue<0 || _potentialValue>65535){
+			fprintf(stderr,"bad disc set id. must fit in two bytes.\n");
+			return 1;
+		}
+		_setId=_potentialValue;
+	}
 	///////////////////////////////////
 	// init get filenames
 	///////////////////////////////////
@@ -553,7 +571,7 @@ int main(int argc, char** args){
 	size_t _newListLen;
 	struct newFile** _newFileList;
 	uint64_t _curDiscNum;
-	getNewFiles(_chosenRootDir,usedOrNull(args[6]),usedOrNull(args[7]),_lastSeenFilename,&_newListLen,&_newFileList,&_curDiscNum);
+	getNewFiles(_chosenRootDir,usedOrNull(args[7]),usedOrNull(args[8]),_lastSeenFilename,&_newListLen,&_newFileList,&_curDiscNum);
 	if (_newListLen==0){
 		fprintf(stderr,"no new files found\n");
 		return 1;
@@ -716,6 +734,7 @@ int main(int argc, char** args){
 		// write metadata stuff
 		if (iomodeWriteFail(_myInfo.out,_myInfo.iomode,METADATAMAGIC,strlen(METADATAMAGIC))==-2 || // magic
 			iomodePutc(_myInfo.out,_myInfo.iomode,ROUNDVERSIONNUM)==-2 || // version
+			write16(_myInfo.out,_myInfo.iomode,_setId)==-2 || // set id
 			write64(_myInfo.out,_myInfo.iomode,_curDiscNum)==-2 || // disc number
 			write32(_myInfo.out,_myInfo.iomode,_myInfo.curHash)==-2 || // hash
 			write64(_myInfo.out,_myInfo.iomode,_myInfo.hInfo.curUsed)==-2 || // packet header backup

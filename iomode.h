@@ -43,5 +43,6 @@ signed char write16(void* _out, char _type, uint16_t n);
 signed char write32(void* _out, char _type, uint32_t n);
 signed char write64(void* _out, char _type, uint64_t n);
 ///
+signed char read16(void* _out, char _type, uint16_t* n);
 signed char read32(void* _out, char _type, uint32_t* n);
 signed char read64(void* _out, char _type, uint64_t* n);

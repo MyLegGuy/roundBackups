@@ -158,9 +158,19 @@ signed char verifyDisc(void* _out, char _type){
 					{_ret=0; goto cleanup;}
 				}
 				// read the version number
-				if (iomodeGetc(_out,_type)!=ROUNDVERSIONNUM){
-					fprintf(stderr,"bad version number\n");
+				int _readVersion=iomodeGetc(_out,_type);
+				if (_readVersion==EOF){
 					{_ret=0; goto cleanup;}
+				}
+				if (_readVersion==2){
+					// read the disc set ID
+					uint16_t _readSet;
+					if (read16(_out,_type,&_readSet)){
+						goto earlyend;
+					}
+				}else if (_readVersion!=1){
+					fprintf(stderr,"bad version number\n");
+					goto earlyend;
 				}
 				// read the disc number
 				uint64_t _discNumber;

@@ -182,6 +182,13 @@ signed char write64(void* _out, char _type, uint64_t n){
 	return iomodeWriteFail(_out,_type,&n,sizeof(uint64_t));
 }
 //////////////
+signed char read16(void* _out, char _type, uint16_t* n){
+	if (iomodeRead(_out,_type,n,sizeof(uint16_t))!=sizeof(uint16_t)){
+		return -2;
+	}
+	*n=le16toh(*n);
+	return 0;
+}
 signed char read32(void* _out, char _type, uint32_t* n){
 	if (iomodeRead(_out,_type,n,sizeof(uint32_t))!=sizeof(uint32_t)){
 		return -2;
