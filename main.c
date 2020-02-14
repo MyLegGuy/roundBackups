@@ -716,7 +716,7 @@ int main(int argc, char** args){
 		///////////////////////////////////
 		// Do the assemble, encrypt, write
 		///////////////////////////////////
-		if (iomodePrepareWrite(_myInfo.out, _myInfo.iomode)){
+		if (iomodePrepareWrite(_myInfo.out, _myInfo.iomode, _newFilesLeft==_numChosenFiles || ALWAYSLEAVEAPPENDABLE)){
 			fprintf(stderr,"iomodePrepareWrite failed\n");
 			{_didFail=1; goto cleanReleaseFail;}
 		}

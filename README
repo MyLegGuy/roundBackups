@@ -9,7 +9,9 @@ cd not supported. support could easily be added with a few more libburn api call
 to decrypt and extract a disc you've made using the worriedArchive goodextract.out program:
 	gpg -d /dev/sr0 | ./goodextract.out - ./destfolder
 
-at the bottom of the file, there is a backup of all the session key packets found in the pgp file. this packet is required to decrypt a pgp file. if the start of the disc were to be corrupted, the session key and therefor the entire disk would be lost. this extra copy is to help prevent this.
+at the bottom of the file, there is a backup of all the session key packets found in the pgp file. this packet is required to decrypt a pgp file. if the start of the disc were to be corrupted, the session key and therefor the entire disc would be lost. this extra copy is to help prevent this.
+
+discs are only left appendable if there are 0 files left to write after this disc. that is so you can use it next time. you can change this in config.h.
 
 ---------------
 -- WARNING

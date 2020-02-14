@@ -73,13 +73,13 @@ signed char iomodeInit(void** _outOut, char _requestedType){
 	return -2;
 }
 // returns -2 if failed
-signed char iomodePrepareWrite(void* _out, char _type){
+signed char iomodePrepareWrite(void* _out, char _type, char _leaveAppendable){
 	switch(_type){
 		case IOMODE_DISC:
 		{
 			struct iomodeDisc* d = _out;
 			d->isWrite=2; // mark that writing has started
-			if (discStartWrite(getDrive(d->driveList),1, d->state)){
+			if (discStartWrite(getDrive(d->driveList),_leaveAppendable,d->state)){
 				return -2;
 			}
 			return 0;

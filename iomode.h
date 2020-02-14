@@ -25,7 +25,7 @@ struct discReadState{
 	char buff[SECTORSIZE*DISCREADBUFFSEC];
 };
 
-signed char iomodePrepareWrite(void* _out, char _type);
+signed char iomodePrepareWrite(void* _out, char _type, char _leaveAppendable);
 signed char iomodeClose(void* _out, char _type);
 signed char iomodeInit(void** _outOut, char _requestedType);
 signed char iomodeGetFree(void* _src, char _type, size_t* _retSize);

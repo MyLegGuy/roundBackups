@@ -20,3 +20,5 @@
 
 // 1 if the "eject" program is able to eject and retract the tray
 #define DISCEJECTANDRETRACTWORKS 1
+
+#define ALWAYSLEAVEAPPENDABLE 0
