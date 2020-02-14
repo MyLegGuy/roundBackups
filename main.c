@@ -526,8 +526,12 @@ int main(int argc, char** args){
 		return 0;
 	}
 	if (argc!=9){
-		printf("%s <file/disc/fake> <out filepath> <root dir> <seen log filename> <discSetNum> <key fingerprint> <inc list file> <exc list file>\n",args[0]);
-		return 1;
+		if (argc==10 && strcmp(args[9],"--nostdin")==0){
+			_userInEnabled=0;
+		}else{
+			printf("%s <file/disc/fake> <out filepath> <root dir> <seen log filename> <discSetNum> <key fingerprint> <inc list file> <exc list file> [--nostdin]\n",args[0]);
+			return 1;
+		}
 	}
 	char _userChosenMode;
 	if (strcmp(args[1],"file")==0){
