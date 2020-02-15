@@ -716,7 +716,8 @@ int main(int argc, char** args){
 		///////////////////////////////////
 		// Do the assemble, encrypt, write
 		///////////////////////////////////
-		if (iomodePrepareWrite(_myInfo.out, _myInfo.iomode, _newFilesLeft==_numChosenFiles || ALWAYSLEAVEAPPENDABLE)){
+		char _leftAppendable = _newFilesLeft==_numChosenFiles || ALWAYSLEAVEAPPENDABLE;
+		if (iomodePrepareWrite(_myInfo.out, _myInfo.iomode, _leftAppendable)){
 			fprintf(stderr,"iomodePrepareWrite failed\n");
 			{_didFail=1; goto cleanReleaseFail;}
 		}
@@ -781,11 +782,13 @@ int main(int argc, char** args){
 			goto cleanup;
 		}
 		// print how much free space is left
-		size_t _newFreeSpace;
-		if (iomodeGetFree(_myInfo.out,_myInfo.iomode,&_newFreeSpace)){
-			fprintf(stderr,"failed to get amount of free space on disc\n");
-		}else{
-			printf("there are %ld (%ld mb) free bytes left\n",_newFreeSpace,_newFreeSpace/1000/1000);
+		if (_leftAppendable){
+			size_t _newFreeSpace;
+			if (iomodeGetFree(_myInfo.out,_myInfo.iomode,&_newFreeSpace)){
+				fprintf(stderr,"failed to get amount of free space on disc\n");
+			}else{
+				printf("there are %ld (%ld mb) free bytes left\n",_newFreeSpace,_newFreeSpace/1000/1000);
+			}
 		}
 		// verify
 		printf("verifying...\n");
