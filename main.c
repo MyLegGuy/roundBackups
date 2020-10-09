@@ -767,6 +767,9 @@ int main(int argc, char** args){
 		///////////////////////////////////
 		// verify disc
 		///////////////////////////////////
+		if (_myInfo.iomode==IOMODE_FILE){
+			goto noverify;
+		}
 		// eject disc to flush cache
 		if (_myInfo.iomode==IOMODE_DISC){
 			if (_userInEnabled || DISCEJECTANDRETRACTWORKS){
@@ -842,6 +845,7 @@ int main(int argc, char** args){
 		}else{
 			printf("disc is good\n");
 		}
+	noverify:
 		///////////////////////////////////
 		// finish up
 		///////////////////////////////////
