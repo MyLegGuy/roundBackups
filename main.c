@@ -294,7 +294,9 @@ signed char iomodeSwitch(void* _out, char _type, char** _filename, char _userInE
 				free(*_filename);
 				*_filename=_lastTestFile;
 			}
-			sprintf(&_lastTestFile[_lastTestFileRootLen],"%d",_lastOutputFileNum++);
+			do{
+				sprintf(&_lastTestFile[_lastTestFileRootLen],"%d",_lastOutputFileNum++);
+			}while (access(_lastTestFile,F_OK)==0);
 			return 0;
 		case IOMODE_FAKE:
 			return 0;
@@ -581,6 +583,7 @@ int main(int argc, char** args){
 		return 1;
 	}
 	size_t _newFilesLeft=_newListLen;
+	printf("There are %ld new files.\n",_newFilesLeft);
 	///////////////////////////////////
 	// init gpg
 	///////////////////////////////////
