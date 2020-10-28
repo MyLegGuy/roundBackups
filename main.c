@@ -275,11 +275,9 @@ void failIfError(gpgme_error_t e, const char* _preMessage){
 	}
 }
 //////////////
-static int _lastOutputFileNum=0;
-static int _lastTestFileRootLen=0;
-static char _lastTestFile[PATH_MAX]; // yes i know this is unsafe. no i dont care
+static int _fileOutputRootLen=0;
 // switch the current disc or maybe the current file
-signed char iomodeSwitch(void* _out, char _type, char** _filename, char _userInEnabled){
+signed char iomodeSwitch(void* _out, char _type, char** _filename, char _userInEnabled, int _curDiscNum){
 	switch(_type){
 		case IOMODE_DISC:
 			if (_userInEnabled){
@@ -288,15 +286,14 @@ signed char iomodeSwitch(void* _out, char _type, char** _filename, char _userInE
 			}
 			return 0;
 		case IOMODE_FILE:
-			if (!_lastTestFile[0]){ // first run
-				_lastTestFileRootLen=strlen(*_filename);
-				strcpy(_lastTestFile,*_filename);
-				free(*_filename);
-				*_filename=_lastTestFile;
+			if (_fileOutputRootLen==0){ // first run
+				_fileOutputRootLen = strlen(*_filename);
 			}
-			do{
-				sprintf(&_lastTestFile[_lastTestFileRootLen],"%d",_lastOutputFileNum++);
-			}while (access(_lastTestFile,F_OK)==0);
+			char* _newFilename = malloc(_fileOutputRootLen+10+1);
+			memcpy(_newFilename,*_filename,_fileOutputRootLen);
+			sprintf(_newFilename+_fileOutputRootLen,"%04d",_curDiscNum);
+			free(*_filename); // the initial path is made with strdup
+			*_filename=_newFilename;
 			return 0;
 		case IOMODE_FAKE:
 			return 0;
@@ -521,17 +518,49 @@ void shoveBackInBigList(struct newFile** _fromHere, size_t _fromHereSize, struct
 char* usedOrNull(char* _passed){
 	return strcmp(_passed,"-")==0 ? NULL : _passed;
 }
+int getPotentialArgPos(const char* _searchTarget, int argc, char** args){
+	for (int i=0;i<argc;++i){
+		if (strcmp(_searchTarget,args[i])==0){
+			return i;
+		}
+	}
+	return -1;
+}
 int main(int argc, char** args){
 	char _userInEnabled=1; // 0 if no input from user allowed.
+	const char* _chosenIncludeList=NULL;
+	const char* _chosenExcludeList=NULL;
 	if (argc==2){
 		printf("%d\n",verifyDiscFile(args[1]));
 		return 0;
 	}
-	if (argc!=9){
-		if (argc==10 && strcmp(args[9],"--nostdin")==0){
+	if (argc<7){
+		printf("%s <file/disc/fake> <out filepath> <root dir> <seen log filename> <discSetNum> <key fingerprint> [--includelist <inc list file>] [--excludelist <exc list file>] [--nostdin] [--forcefreespace <bytes>]\n",args[0]);
+		return 1;
+	}else if (argc>7){
+		// check for some optional arguments
+		char** _optionalStart=args+7;
+		int _numOptional=argc-7;
+		int _numOptionalUsed=0;
+		int _oargIndex;
+		if (getPotentialArgPos("--nostdin",_numOptional,_optionalStart)!=-1){
+			_numOptionalUsed++;
 			_userInEnabled=0;
-		}else{
-			printf("%s <file/disc/fake> <out filepath> <root dir> <seen log filename> <discSetNum> <key fingerprint> <inc list file> <exc list file> [--nostdin]\n",args[0]);
+		}
+		if ((_oargIndex=getPotentialArgPos("--forcefreespace",_numOptional,_optionalStart))!=-1){
+			_numOptionalUsed+=2;
+			iomodeSetSizeOverride(atoll(args[_oargIndex+1]));
+		}
+		if ((_oargIndex=getPotentialArgPos("--includelist",_numOptional,_optionalStart))!=-1){
+			_numOptionalUsed+=2;
+			_chosenIncludeList=args[_oargIndex+1];
+		}
+		if ((_oargIndex=getPotentialArgPos("--excludelist",_numOptional,_optionalStart))!=-1){
+			_numOptionalUsed+=2;
+			_chosenExcludeList=args[_oargIndex+1];
+		}
+		if (_numOptionalUsed!=_numOptional){
+			fprintf(stderr,"some optional arguments were invalid?\n");
 			return 1;
 		}
 	}
@@ -543,6 +572,7 @@ int main(int argc, char** args){
 	}else if (strcmp(args[1],"fake")==0){
 		_userChosenMode=IOMODE_FAKE;
 	}else{
+		fprintf(stderr,"invalid iomode?\n");
 		return 1;
 	}
 	char* _curFilename=strdup(args[2]);
@@ -577,7 +607,7 @@ int main(int argc, char** args){
 	size_t _newListLen;
 	struct newFile** _newFileList;
 	uint64_t _curDiscNum;
-	getNewFiles(_chosenRootDir,usedOrNull(args[7]),usedOrNull(args[8]),_lastSeenFilename,&_newListLen,&_newFileList,&_curDiscNum);
+	getNewFiles(_chosenRootDir,_chosenIncludeList,_chosenExcludeList,_lastSeenFilename,&_newListLen,&_newFileList,&_curDiscNum);
 	if (_newListLen==0){
 		fprintf(stderr,"no new files found\n");
 		return 1;
@@ -668,7 +698,7 @@ int main(int argc, char** args){
 		//////////////////////////////
 		++_curDiscNum;
 		printf("please insert your disc. it will be Disc %ld\n",_curDiscNum);
-		if (iomodeSwitch(_myInfo.out,_myInfo.iomode,&_curFilename,_userInEnabled)){
+		if (iomodeSwitch(_myInfo.out,_myInfo.iomode,&_curFilename,_userInEnabled,_curDiscNum)){
 			fprintf(stderr,"iomodeSwitch failed\n");
 			goto cleanup;
 		}
@@ -767,85 +797,86 @@ int main(int argc, char** args){
 		///////////////////////////////////
 		// verify disc
 		///////////////////////////////////
-		if (_myInfo.iomode==IOMODE_FILE){
-			goto noverify;
-		}
-		// eject disc to flush cache
+		signed char _doUpdateSeen=1;
 		if (_myInfo.iomode==IOMODE_DISC){
-			if (_userInEnabled || DISCEJECTANDRETRACTWORKS){
-				if (ejectRealDrive()){
-					printf("please open and close the drive\n");
-					forwardUntil("ididasyouasked");
-				}else if (closeRealDrive()){
-					printf("Please close your drive\n");
-					forwardUntil("ididasyouasked");
+			// eject disc to flush cache
+			if (_myInfo.iomode==IOMODE_DISC){
+				if (_userInEnabled || DISCEJECTANDRETRACTWORKS){
+					if (ejectRealDrive()){
+						printf("please open and close the drive\n");
+						forwardUntil("ididasyouasked");
+					}else if (closeRealDrive()){
+						printf("Please close your drive\n");
+						forwardUntil("ididasyouasked");
+					}
 				}
 			}
-		}
-		// reopen disc
-		if (iomodeOpen(&_myInfo.out,_myInfo.iomode,0,_curFilename)){
-			fprintf(stderr,"iomodeOpen failed for verification\n");
-			goto cleanup;
-		}
-		// print how much free space is left
-		if (_leftAppendable){
-			size_t _newFreeSpace;
-			if (iomodeGetFree(_myInfo.out,_myInfo.iomode,&_newFreeSpace)){
-				fprintf(stderr,"failed to get amount of free space on disc\n");
-			}else{
-				printf("there are %ld (%ld mb) free bytes left\n",_newFreeSpace,_newFreeSpace/1000/1000);
-			}
-		}
-		// verify
-		printf("verifying...\n");
-		signed char _doUpdateSeen=verifyDisc(_myInfo.out,_myInfo.iomode);
-		if (iomodeClose(_myInfo.out,_myInfo.iomode)==-2){
-			fprintf(stderr,"iomode close\n");
-			goto cleanup;
-		}
-		if (_doUpdateSeen!=1){ // if it's bad
-			signed char _doIgnore;
-			if (_userInEnabled){
-				if (forwardUntil("mybodyisready")){
-					goto cleanup;
-				}
-				if (_doUpdateSeen==-1){
-					fprintf(stderr,"disc verification failed\n");
-					printf("disc verification failed. ignore? (y/n)\n");
-				}else{
-					fprintf(stderr,"disc corrupt.\n");
-					printf("disc corrupt. ignore? (y/n)\n");
-				}
-				_doIgnore = getYesNoIn();
-			}else{
-				fprintf(stderr,"verification result: %s",_doUpdateSeen==0 ? "corrupt" : "failed");
-				_doIgnore=-1;
-			}
-			if (_doIgnore==-1){
+			// reopen disc
+			if (iomodeOpen(&_myInfo.out,_myInfo.iomode,0,_curFilename)){
+				fprintf(stderr,"iomodeOpen failed for verification\n");
 				goto cleanup;
-			}else if (_doIgnore==1){ // yes, do ignore
-				printf("Really ignore the problem? these files will not be rewritten.\n");
-				switch(getYesNoIn()){
-					case -1:
+			}
+			// print how much free space is left
+			if (_leftAppendable){
+				size_t _newFreeSpace;
+				if (iomodeGetFree(_myInfo.out,_myInfo.iomode,&_newFreeSpace)){
+					fprintf(stderr,"failed to get amount of free space on disc\n");
+				}else{
+					printf("there are %ld (%ld mb) free bytes left\n",_newFreeSpace,_newFreeSpace/1000/1000);
+				}
+			}
+			// verify
+			printf("verifying...\n");
+			_doUpdateSeen=verifyDisc(_myInfo.out,_myInfo.iomode);
+			if (iomodeClose(_myInfo.out,_myInfo.iomode)==-2){
+				fprintf(stderr,"iomode close\n");
+				goto cleanup;
+			}
+			if (_doUpdateSeen!=1){ // if it's bad
+				signed char _doIgnore;
+				if (_userInEnabled){
+					if (forwardUntil("mybodyisready")){
 						goto cleanup;
-					case 1:
-						_doUpdateSeen=1; // continue as if the disc was correct
-						break;
-					case 0:
-						goto putfilesback;
+					}
+					if (_doUpdateSeen==-1){
+						fprintf(stderr,"disc verification failed\n");
+						printf("disc verification failed. ignore? (y/n)\n");
+					}else{
+						fprintf(stderr,"disc corrupt.\n");
+						printf("disc corrupt. ignore? (y/n)\n");
+					}
+					_doIgnore = getYesNoIn();
+				}else{
+					fprintf(stderr,"verification result: %s",_doUpdateSeen==0 ? "corrupt" : "failed");
+					_doIgnore=-1;
+				}
+				if (_doIgnore==-1){
+					goto cleanup;
+				}else if (_doIgnore==1){ // yes, do ignore
+					printf("Really ignore the problem? these files will not be rewritten.\n");
+					switch(getYesNoIn()){
+						case -1:
+							goto cleanup;
+						case 1:
+							_doUpdateSeen=1; // continue as if the disc was correct
+							break;
+						case 0:
+							goto putfilesback;
+					}
+				}else{
+				putfilesback:
+					// put the files back into the big array.
+					shoveBackInBigList(_compressInfo->fileList,_numChosenFiles,_newFileList,_newListLen);
+					_doUpdateSeen=0;
+					free(_compressInfo->fileList);
+					_compressInfo->fileList=NULL;
 				}
 			}else{
-			putfilesback:
-				// put the files back into the big array.
-				shoveBackInBigList(_compressInfo->fileList,_numChosenFiles,_newFileList,_newListLen);
-				_doUpdateSeen=0;
-				free(_compressInfo->fileList);
-				_compressInfo->fileList=NULL;
+				printf("disc is good\n");
 			}
 		}else{
-			printf("disc is good\n");
+			puts("Not a disk. Skipping verification.");
 		}
-	noverify:
 		///////////////////////////////////
 		// finish up
 		///////////////////////////////////
@@ -866,16 +897,21 @@ int main(int argc, char** args){
 			free(_compressInfo->fileList);
 			_newFilesLeft-=_numChosenFiles;
 		}
-
+		//
 		printf("There are %ld new files left\n",_newFilesLeft);
-		if (_newFilesLeft!=0 && _userInEnabled){
-			if (forwardUntil("mybodyisready")){
-				goto cleanup;
-			}
-			printf("burn another disc? (y/n)\n");
-			if (getYesNoIn()!=1){
+		if (_newFilesLeft!=0){
+			if (_userInEnabled){
+				if (forwardUntil("mybodyisready")){
+					goto cleanup;
+				}
+				printf("burn another disc? (y/n)\n");
+				if (getYesNoIn()!=1){
+					break;
+				}
+			}else if (_myInfo.iomode==IOMODE_DISC){
+				puts("Stopping because user isn't here to input new disk.");
 				break;
-			}
+			} // else we continue
 		}else{
 			printf("HAPPY END\n");
 			break;

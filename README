@@ -1,36 +1,95 @@
---------
-About
---------
-write an encrypted worriedArchive to disc.
-will keep track of which files already written on other disc and only write the new ones. (optional)
-
-cd not supported. support could easily be added with a few more libburn api calls but anybody using cd is a maniac.
-
-to decrypt and extract a disc you've made using the worriedArchive goodextract.out program:
-	gpg -d /dev/sr0 | ./goodextract.out - ./destfolder
-
-at the bottom of the file, there is a backup of all the session key packets found in the pgp file. this packet is required to decrypt a pgp file. if the start of the disc were to be corrupted, the session key and therefor the entire disc would be lost. this extra copy is to help prevent this.
-
-discs are only left appendable if there are 0 files left to write after this disc. that is so you can use it next time. you can change this in config.h.
-
 ---------------
 -- WARNING
 ---------------
 This software works on my machine.
 to my knowledge, gpgme does not give me precise control over things like partial packet length sizes. also your key size can change the first packet's size.
-different gpg defaults can cause your system to output a bigger pgp file than mine would. possibly too big to fit on the disc, runining everything.
+different gpg defaults can cause your system to output a bigger pgp file than mine would. possibly too big to fit on the disk, runining everything.
 be careful.
 constant numbers giving space reserved for metadata can be found in roundFormat.h and config.h.
+specifically, look at PARTIALCONTINUE.
 
 --------
-Format of the disc image:
+About
+--------
+This is a program for writing any data to optical disks.
+(cd not supported, only BD and DVD. support could easily be added with a few more libburn api calls but anybody using cd is a maniac.)
+The data is encrypted too.
+Here's how it works:
+1. Have a folder with a bunch of files inside that you want to backup
+2. Pass that folder path to roundBackups
+3. roundBackups looks at the `seenLog` and the files inside the folder. any file not in the `seenLog` but in the folder is queued for backup.
+4. roundBackups writes as many files to the current disk as it can hold. (the biggest possible files are written first.)
+5. roundBackups verifies that the disk data is correct using the hash written on the disk.
+6. roundBackups updates the `seenLog` with the written files.
+6. (if more files are left) roundBackups lets you burn another disk if you wish.
+
+When writing, the files are packed into the worriedArchive (https://github.com/mylegguy/worriedarchive) format, encrypted with gpgme, and then written to disk. This is done using custom IO callbacks. Ram usage is not high and no temporary files are written to your hard drive.
+At the bottom of the file on the disk, there is a backup of all the session key packets found in the pgp file. This packet is required to decrypt a pgp file. If the start of the disk were to be corrupted, the session key would be lost and all of the encrypted data with it. This extra copy is to help prevent that.
+
+Getting the files back from a disk is easy:
+gpg -d /dev/sr0 | ./goodextract.out - ./destfolder
+This will decrypt and extract contents to ./destfolder. The "goodextract.out" program is from worriedArchive.
+
+Disks are only left appendable if there are 0 files left to write after this disk. that is so you can use it next time. you can change this in config.h.
+
+--------
+Compiling
+--------
+Install gpgme and libburn using your package manager.
+Clone https://github.com/mylegguy/worriedarchive
+Make and install the shared library:
+	"sudo -E make -f makefile.libassemble install"
+Make the standalone extractor program to ./goodextract.out:
+	"make -f makefile.goodextract"
+Clone https://github.com/MyLegGuy/roundBackups
+Compile roundBackups:
+	"make"
+
+--------
+Example usage
+--------
+First, let's back up /home/nathan/importantjpegs. Instead of a disk, the data will be written to the file at ~/encbak
+./a.out file ~/encbak /home/nathan/importantjpegs ~/importantjpegs-seenlist 1 4B37E5B42512BA5173EB441B4AC4E4C143A94169
+The file will be 7G big at most. This is to simulate the limited space of an actual optical disk.
+We need to create the seen log manually. So create it as an empty file. In bash, you could just do ">~/importantjpegs-seenlist"
+The long string starting with "4B3" is my gpg key. Find yours with "gpg --list-keys". I think if you put "-" it'll do symmetric encryption, but I don't remember.
+"1" can be any number. It's just a set ID number written to disk. I recommend using the same number for all disks with files from the same folder.
+
+After running that command, look through the terminal output for a sentence that says "disc has XXXXX bytes free".
+Then, verify that the generated file at ~/encbak is less than that size. You should use "du -b <filename>"
+We want the file to be 4 or 5 mb under the maximum size.
+If the file is too big, increase constants in roundFormat.h and config.h.
+	Specifically, COMFYMETADATARESERVED,  ASSUMEDSESSIONKEYPACKETLEN, and PARTIALCONTINUE.
+
+If the generated file is a good size, we can try an actual disk.
+But first, truncate "~/importantjpegs-seenlist" to an empty file again. This is to ignore our test run. Only do this once.
+To write to disk, we just need to change the same command we used before a tiny bit.
+Change the second argument from "file" to "disc" and third argument from "~/encbak" to "/dev/sr0".
+(/dev/sr0 is probably your disk reader location. If not, figure it out.)
+
+--------
+Features that don't exist yet
+--------
+These features will be added when I need them.
+1. Program to tell me which disk a file is on so I can restore it.
+	This can be done manually by parsing the "lastSeen" file, finding the disk number, extracting it, and restoring the file.
+	The disk number is written in binary.
+2. Print the disk number of the inserted disk.
+
+--------
+-- WARNING PT2
+--------
+Do not write to files that are queued for backup while the program is running. If you do, the program may fail.
+
+--------
+Format of the disk image:
 --------
 <gpg encrypted worried archive>
 <0x00> (this can be recognized because no pgp tag header can start without bit 7 set or with tag id 0.)
 "ROUNDEND" (ASCII)
 <uint8_t roundArchiveVersion> (latest version is defined in roundFormat.h)
-<uint16_t discSetId> (only if roundArchiveVersion>=0x02)
-<uint64_t discNumber>
+<uint16_t diskSetId> (only if roundArchiveVersion>=0x02)
+<uint64_t diskNumber>
 <uint32_t: crc32 of encrypted worried archive>
 uint64_t sessionKeyPacketBackupLength
 (sessionKeyPacketBackupLength) bytes of sessionKeyPacketBackup

@@ -11,14 +11,24 @@
 #include <unistd.h>
 #include "iomode.h"
 //////////////
+static char _overrideiomodeSizeEnabled=0;
+static size_t _overrideiomodeSize=0;
+void iomodeSetSizeOverride(size_t _size){
+	_overrideiomodeSizeEnabled=1;
+	_overrideiomodeSize=_size;
+}
 signed char iomodeGetFree(void* _src, char _type, size_t* _retSize){
+	if (_overrideiomodeSizeEnabled){
+		*_retSize=_overrideiomodeSize;
+		return 0;
+	}
 	switch(_type){
 		case IOMODE_DISC:
 			*_retSize=getDiscFreeSpace(getDrive(((struct iomodeDisc*)_src)->driveList));
 			return 0;
 		case IOMODE_FILE:
 		case IOMODE_FAKE:
-			*_retSize=25025314816; //1000000000
+			*_retSize=7000000000; //7 gb
 			return 0;
 	}
 	return -2;
