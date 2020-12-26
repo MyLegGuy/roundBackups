@@ -549,15 +549,15 @@ int main(int argc, char** args){
 		}
 		if ((_oargIndex=getPotentialArgPos("--forcefreespace",_numOptional,_optionalStart))!=-1){
 			_numOptionalUsed+=2;
-			iomodeSetSizeOverride(atoll(args[_oargIndex+1]));
+			iomodeSetSizeOverride(atoll(_optionalStart[_oargIndex+1]));
 		}
 		if ((_oargIndex=getPotentialArgPos("--includelist",_numOptional,_optionalStart))!=-1){
 			_numOptionalUsed+=2;
-			_chosenIncludeList=args[_oargIndex+1];
+			_chosenIncludeList=_optionalStart[_oargIndex+1];
 		}
 		if ((_oargIndex=getPotentialArgPos("--excludelist",_numOptional,_optionalStart))!=-1){
 			_numOptionalUsed+=2;
-			_chosenExcludeList=args[_oargIndex+1];
+			_chosenExcludeList=_optionalStart[_oargIndex+1];
 		}
 		if (_numOptionalUsed!=_numOptional){
 			fprintf(stderr,"some optional arguments were invalid?\n");
